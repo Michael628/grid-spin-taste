@@ -1,0 +1,8 @@
+<grid>
+        <parameters>
+                <!-- <gammas>(GX G1) (GY G1) (GZ G1)</gammas> -->
+                <!-- <shiftParityOdd>true</shiftParityOdd> -->
+                <gammas>(G5 G5) (GX GX) (GX G1)</gammas>
+                <shiftParityOdd>false</shiftParityOdd>
+        </parameters>
+</grid>
