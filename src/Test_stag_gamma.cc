@@ -308,8 +308,8 @@ int main(int argc, char **argv) {
 
           st5(result1, src1);
 
-          stag.Mdag(result1, temp);
-          CG(hermOp, temp, result1);
+          stag.Mdag(result1, temp); // temp is output 
+          CG(hermOp, temp, result1); // result1 is output
 
           st2(result2, src2);
 
