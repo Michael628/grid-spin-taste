@@ -1,6 +1,7 @@
 #pragma once
 // #include <Grid/Hadrons/Global.hpp>
 #include <Grid/Grid_Eigen_Tensor.h>
+#include <StagGamma.h>
 
 NAMESPACE_BEGIN(Grid);
 
@@ -26,32 +27,27 @@ public:
   template <typename TensorType>
   static void MesonField(TensorType &mat, const FermionField *lhs_wi,
                          const FermionField *rhs_vj,
-                         std::vector<Gamma::Algebra> gammas,
+                         std::vector<StagGamma::SpinTastePair> gammas,
                          const std::vector<ComplexField> &mom, int orthogdim,
                          double *t_kernel = nullptr, double *t_gsum = nullptr);
 };
 
 const int stagA2Ablocking = 128;
 
-// template <typename vtype>
-// using iVecSpinMatrix = iVector<iMatrix<iScalar<vtype>, Ns>, stagA2Ablocking>;
-// typedef iVecSpinMatrix<Complex> VecSpinMatrix;
-// typedef iVecSpinMatrix<vComplex> vVecSpinMatrix;
-// typedef Lattice<vVecSpinMatrix> LatticeVecSpinMatrix;
-//
-// template <typename vtype>
-// using iVecComplex = iVector<iScalar<iScalar<vtype>>, stagA2Ablocking>;
-// typedef iVecComplex<Complex> VecComplex;
-// typedef iVecComplex<vComplex> vVecComplex;
-// typedef Lattice<vVecComplex> LatticeVecComplex;
+template <typename vtype>
+using iVecStag = iVector<iScalar<iScalar<vtype>>, stagA2Ablocking>;
+typedef iVecStag<Complex> VecStag;
+typedef iVecStag<vComplex> vVecStag;
+typedef Lattice<vVecStag> LatticeVecStag;
 
 template <class FImpl>
 template <typename TensorType>
 void StagA2Autils<FImpl>::MesonField(
     TensorType &mat, const FermionField *lhs_wi, const FermionField *rhs_vj,
-    std::vector<Gamma::Algebra> gammas, const std::vector<ComplexField> &mom,
-    int orthogdim, double *t_kernel, double *t_gsum) {
-  const int block = A2Ablocking;
+    std::vector<StagGamma::SpinTastePair> gammas,
+    const std::vector<ComplexField> &mom, int orthogdim, double *t_kernel,
+    double *t_gsum) {
+  const int block = stagA2Ablocking;
   typedef typename FImpl::SiteSpinor vobj;
 
   typedef typename vobj::scalar_object sobj;
@@ -73,32 +69,25 @@ void StagA2Autils<FImpl>::MesonField(
   int Ngamma = gammas.size();
   int Nmom = mom.size();
 
-  LatticeVecSpinMatrix SpinMat(grid);
-  LatticeVecSpinMatrix MomSpinMat(grid);
+  LatticeVecStag SpinMat(grid);
+  LatticeVecStag MomSpinMat(grid);
+  StagGamma spinTaste;
 
-  std::vector<VecSpinMatrix> sliced;
+  std::vector<VecStag> sliced;
   for (int i = 0; i < Lblock; i++) {
     autoView(SpinMat_v, SpinMat, AcceleratorWrite);
     autoView(lhs_v, lhs_wi[i], AcceleratorRead);
     for (int jo = 0; jo < Rblock; jo += block) {
       for (int j = jo; j < MIN(Rblock, jo + block); j++) {
         int jj = j % block;
-        autoView(rhs_v, rhs_vj[j], AcceleratorRead); // Create a vector of views
-        //////////////////////////////////////////
-        // Should write a SpinOuterColorTrace
-        //////////////////////////////////////////
+        autoView(rhs_v, rhs_vj[j], AcceleratorRead);
 
         accelerator_for(ss, grid->oSites(), (size_t)Nsimd, {
           auto left = conjugate(lhs_v(ss));
           auto right = rhs_v(ss);
           auto vv = SpinMat_v(ss);
-          for (int s1 = 0; s1 < Ns; s1++) {
-            for (int s2 = 0; s2 < Ns; s2++) {
-              vv(jj)(s1, s2)() = left()(s2)(0) * right()(s1)(0) +
-                                 left()(s2)(1) * right()(s1)(1) +
-                                 left()(s2)(2) * right()(s1)(2);
-            }
-          }
+          vv(jj)()() = left()()(0) * right()()(0) + left()()(1) * right()()(1) +
+                       left()()(2) * right()()(2);
           coalescedWrite(SpinMat_v[ss], vv);
         });
 
@@ -106,17 +95,20 @@ void StagA2Autils<FImpl>::MesonField(
       // After getting the sitewise product do the mom phase loop
       for (int m = 0; m < Nmom; m++) {
 
-        MomSpinMat = SpinMat * mom[m];
-
-        sliceSum(MomSpinMat, sliced, orthogdim);
-
         for (int mu = 0; mu < Ngamma; mu++) {
+
+          MomSpinMat = SpinMat * mom[m];
+
+          spinTaste.setSpinTaste(gammas[mu]);
+          spinTaste.applyPhase(MomSpinMat, MomSpinMat);
+
+          sliceSum(MomSpinMat, sliced, orthogdim);
+
           for (int t = 0; t < sliced.size(); t++) {
             for (int j = jo; j < MIN(Rblock, jo + block); j++) {
               int jj = j % block;
               auto tmp = peekIndex<LorentzIndex>(sliced[t], jj);
-              auto trSG = trace(tmp * Gamma(gammas[mu]));
-              mat(m, mu, t, i, j) = trSG()();
+              mat(m, mu, t, i, j) = tmp()();
             }
           }
         }

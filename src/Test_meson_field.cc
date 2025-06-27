@@ -26,16 +26,20 @@ See the full license in the file "LICENSE" in the top level distribution
 directory
 *************************************************************************************/
 
+// clang-format off
 #include <Grid/Grid.h>
+#include <StagA2AutilsOriginal.h>
 #include <StagA2Autils.h>
+#include <StagGamma.h>
+// clang-format on
 
 using namespace Grid;
 
-const int TSRC = 0; // timeslice where rho is nonzero
-const int VDIM = 8; // length of each vector
+const int TSRC = 0;   // timeslice where rho is nonzero
+const int VDIM = 128; // length of each vector
 
-typedef typename DomainWallFermionD::ComplexField ComplexField;
-typedef typename DomainWallFermionD::FermionField FermionField;
+typedef typename NaiveStaggeredFermionD::ComplexField ComplexField;
+typedef typename NaiveStaggeredFermionD::FermionField FermionField;
 
 int main(int argc, char *argv[]) {
   // initialization
@@ -73,15 +77,18 @@ int main(int argc, char *argv[]) {
             << std::endl;
 
   // Gamma matrices used in the contraction
-  std::vector<Gamma::Algebra> Gmu = {
-      Gamma::Algebra::GammaX, Gamma::Algebra::GammaY, Gamma::Algebra::GammaZ,
-      Gamma::Algebra::GammaT, Gamma::Algebra::GammaX, Gamma::Algebra::GammaY,
-      Gamma::Algebra::GammaZ, Gamma::Algebra::GammaT};
+  std::vector<StagGamma::SpinTastePair> Gmu = {
+      {StagGamma::StagAlgebra::G5, StagGamma::StagAlgebra::G5},
+      {StagGamma::StagAlgebra::GX, StagGamma::StagAlgebra::GX},
+      {StagGamma::StagAlgebra::GY, StagGamma::StagAlgebra::GY},
+      {StagGamma::StagAlgebra::GZ, StagGamma::StagAlgebra::GZ},
+      {StagGamma::StagAlgebra::GT, StagGamma::StagAlgebra::GT}};
 
   // momentum phases e^{ipx}
-  std::vector<std::vector<double>> momenta = {
-      {0., 0., 0.}, {1., 0., 0.}, {-1., 0., 0.}, {0, 1., 0.},  {0, -1., 0.},
-      {0, 0, 1.},   {0, 0, -1.},  {1., 1., 0.},  {1., 1., 1.}, {2., 0., 0.}};
+  std::vector<std::vector<double>> momenta = {{0., 0., 0.}};
+  // std::vector<std::vector<double>> momenta = {
+  //     {0., 0., 0.}, {1., 0., 0.}, {-1., 0., 0.}, {0, 1., 0.},  {0, -1., 0.},
+  //     {0, 0, 1.},   {0, 0, -1.},  {1., 1., 0.},  {1., 1., 1.}, {2., 0., 0.}};
   std::cout << GridLogMessage << "Meson fields will be created for "
             << Gmu.size() << " Gamma matrices and " << momenta.size()
             << " momenta." << std::endl;
@@ -100,9 +107,10 @@ int main(int argc, char *argv[]) {
   }
   std::cout << GridLogMessage << "Computing complex phases done." << std::endl;
 
+  Eigen::Tensor<ComplexD, 5, Eigen::RowMajor> MppOld(1, Gmu.size(), Nt, VDIM,
+                                                     VDIM);
   Eigen::Tensor<ComplexD, 5, Eigen::RowMajor> Mpp(momenta.size(), Gmu.size(),
                                                   Nt, VDIM, VDIM);
-  Eigen::Tensor<ComplexD, 5, Eigen::RowMajor> App(B0.size(), 1, Nt, VDIM, VDIM);
 
   // timer
   double start, stop;
@@ -110,11 +118,17 @@ int main(int argc, char *argv[]) {
   /////////////////////////////////////////////////////////////////////////
   // execute meson field routine
   /////////////////////////////////////////////////////////////////////////
-  StagA2Autils<WilsonImplR>::MesonField(Mpp, &phi[0], &phi[0], Gmu, phases, Tp);
   start = usecond();
-  StagA2Autils<WilsonImplR>::MesonField(Mpp, &phi[0], &phi[0], Gmu, phases, Tp);
+  StagA2Autils<StaggeredImplR>::MesonField(Mpp, &phi[0], &phi[0], Gmu, phases,
+                                           Tp);
   stop = usecond();
   std::cout << GridLogMessage << "M(phi,phi) created, execution time "
+            << stop - start << " us" << std::endl;
+  start = usecond();
+  auto worker = A2AWorkerLocal<StaggeredImplR>(&grid, {}, Gmu, Tp);
+  worker.StagMesonField(MppOld, &phi[0], nullptr, &phi[0], nullptr);
+  stop = usecond();
+  std::cout << GridLogMessage << "Old M(phi,phi) created, execution time "
             << stop - start << " us" << std::endl;
 
   std::string FileName = "Meson_Fields";
@@ -130,6 +144,7 @@ int main(int argc, char *argv[]) {
   {
     Default_Writer w(FileName);
     write(w, "MesonField", Mpp);
+    write(w, "MesonFieldOld", MppOld);
   }
   // epilogue
   std::cout << GridLogMessage << "Grid is finalizing now" << std::endl;
