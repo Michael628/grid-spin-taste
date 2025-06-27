@@ -4,7 +4,7 @@
 # for scalar:
 # ./staggamma --grid 4.4.4.4 
 
-gridinstall=$(HOME)/work/Grid/install-scalar
+gridinstall=$(HOME)/Dropbox/Projects/gridProjects/Grid/install-scalar
 config=$(gridinstall)/bin/grid-config
 
 INCLUDES := -I../src/cpp # Manually specify include dirs
@@ -18,6 +18,3 @@ COMPILER=$(shell $(config) --cxx)
 
 stag_gamma: ../src/Test_stag_gamma.cc
 	$(COMPILER) -O0 $(INCLUDES) -o $@ $(CXXFLASGS)  ../src/Test_stag_gamma.cc  $(LDFLAGS) $(LIBS) 
-
-stag_a2a: ../src/Test_meson_field.cc
-	$(COMPILER) -O3 $(INCLUDES) -o $@ $(CXXFLASGS)  ../src/Test_meson_field.cc  $(LDFLAGS) $(LIBS) 
