@@ -4,7 +4,8 @@
 # for scalar:
 # ./staggamma --grid 4.4.4.4 
 
-gridinstall=$(HOME)/Dropbox/Projects/gridProjects/Grid/install-scalar
+# gridinstall=$(HOME)/Dropbox/Projects/gridProjects/Grid/install-scalar
+gridinstall=$(HOME)/Dropbox/Workspaces/Grid/install-scalar
 config=$(gridinstall)/bin/grid-config
 
 INCLUDES := -I../src/cpp # Manually specify include dirs
