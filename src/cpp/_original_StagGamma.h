@@ -46,19 +46,17 @@ public:
     calculatePhase();
   }
 
-  StagGamma(SpinTastePair st) { StagGamma(st.first, st.second); }
+  StagGamma(SpinTastePair initg) { StagGamma(initg.first, initg.second); }
 
-  void setGaugeField(LatticeGaugeField &U) { _U = &U; }
+  void setGaugeField(LatticeGaugeField &U_) { U = &U_; }
 
-  inline bool isLocal() const { return !(_spin ^ _taste); }
-
-  inline void setSpin(StagAlgebra spin) {
-    _spin = spin;
+  inline void setSpin(StagAlgebra g) {
+    _spin = g;
     calculatePhase();
   }
 
-  inline void setTaste(StagAlgebra taste) {
-    _taste = taste;
+  inline void setTaste(StagAlgebra g) {
+    _taste = g;
     calculatePhase();
   }
 
@@ -68,27 +66,25 @@ public:
     calculatePhase();
   }
 
-  inline void setSpinTaste(SpinTastePair st) {
-    setSpinTaste(st.first, st.second);
-  }
+  inline void setSpinTaste(SpinTastePair g) { setSpinTaste(g.first, g.second); }
 
   static std::vector<StagGamma::SpinTastePair>
-  ParseSpinTaste(std::string stString, bool applyG5 = false) {
-    auto spinTastes = strToVec<StagGamma::SpinTastePair>(stString);
+  ParseSpinTasteString(std::string str, bool applyG5 = false) {
+    auto gammas = strToVec<StagGamma::SpinTastePair>(str);
 
     if (applyG5) {
-      StagGamma gamma;
-      StagGamma g5g5(StagGamma::StagAlgebra::G5, StagGamma::StagAlgebra::G5);
+      StagGamma st;
+      StagGamma g5(StagGamma::StagAlgebra::G5, StagGamma::StagAlgebra::G5);
 
-      for (auto &st : spinTastes) {
-        gamma.setSpinTaste(st);
-        gamma = gamma * g5g5;
-        st.first = gamma._spin;
-        st.second = gamma._taste;
+      for (auto &g : gammas) {
+        st.setSpinTaste(g);
+        st = st * g5;
+        g.first = st._spin;
+        g.second = st._taste;
       }
     }
 
-    return spinTastes;
+    return gammas;
   }
   static std::string GetName(StagAlgebra spin, StagAlgebra taste) {
 
@@ -98,8 +94,8 @@ public:
     return name;
   }
 
-  static std::string GetName(SpinTastePair st) {
-    return StagGamma::GetName(st.first, st.second);
+  static std::string GetName(SpinTastePair g) {
+    return StagGamma::GetName(g.first, g.second);
   }
 
   std::string getName() const { return StagGamma::GetName(_spin, _taste); }
@@ -121,8 +117,12 @@ public:
 private:
   // Calculate the < and > operations as defined in Follana (2007) eqns A5 and
   // A7.
-  static inline StagAlgebra LessThan(StagAlgebra alg);
-  static inline StagAlgebra GreaterThan(StagAlgebra alg);
+  static inline StagAlgebra LessThan(StagAlgebra g);
+  static inline StagAlgebra GreaterThan(StagAlgebra g);
+
+  // Assign negative orientations to StagAlgebra gammas according to txyz (or
+  // xyzt?) oriented euclidean space.
+  inline int getOrientation(StagAlgebra g);
 
   // Implements eqn. E3 of Follana (2007)
   inline void calculatePhase();
@@ -140,24 +140,21 @@ private:
 public:
   static constexpr unsigned int nGamma = 16;
   // TXYZ convention
-
   static inline const std::array<const char *, nGamma> name = {
       {"G1", "GZ", "GY", "GYZ", "GX", "GZX", "GXY", "G5T", "GT", "GZT", "GYT",
        "G5X", "GXT", "G5Y", "G5Z", "G5"}};
-
   static inline const std::array<const StagAlgebra, 4> gmu = {{
-      // Index ordering that matches Grid convention, 0=X, 1=Y, 2=Z, 3=T
+      // index ordering that matches Grid convention, XYZT
       StagGamma::StagAlgebra::GX,
       StagGamma::StagAlgebra::GY,
       StagGamma::StagAlgebra::GZ,
       StagGamma::StagAlgebra::GT,
   }};
-
   friend inline StagGamma operator*(const StagGamma &g1, const StagGamma &g2);
 
 public:
   StagAlgebra _spin, _taste;
-  LatticeGaugeField *_U = nullptr;
+  LatticeGaugeField *U = nullptr;
 
 private:
   StagAlgebra _oscillateDirs = 0b0000;
@@ -165,9 +162,9 @@ private:
   RealD _scaling;
 };
 
-inline StagGamma::StagAlgebra StagGamma::LessThan(StagAlgebra alg) {
+inline StagGamma::StagAlgebra StagGamma::LessThan(StagAlgebra g) {
   uint8_t ret = 0;
-  uint8_t gammaMask = alg;
+  uint8_t gammaMask = g;
 
   for (int i = 0; i < Nd - 1; i++) {
     gammaMask = gammaMask >> 1;
@@ -177,75 +174,92 @@ inline StagGamma::StagAlgebra StagGamma::LessThan(StagAlgebra alg) {
   return ret;
 }
 
-inline StagGamma::StagAlgebra StagGamma::GreaterThan(StagAlgebra alg) {
+inline StagGamma::StagAlgebra StagGamma::GreaterThan(StagAlgebra g) {
   uint8_t ret = 0;
-  uint8_t gammaMask = alg;
+  uint8_t gammaMask = g;
 
   for (int i = 0; i < Nd - 1; i++) {
     gammaMask = gammaMask << 1;
     // each bit will toggle for each 1 that passes over it
     ret = ret ^ gammaMask;
   }
-  return (0b1111 & ret); // Zero out `ret` after fourth bit
+  return (0b1111 & ret);
 }
 
 template <class obj>
 void StagGamma::applyGamma(Lattice<obj> &lhs, const Lattice<obj> &rhs) const {
 
-  if (!this->isLocal()) {
-    assert(_U != nullptr);
-  }
+  uint16_t shift = _spin ^ _taste;
 
-  uint8_t shift = _spin ^ _taste;
+  // Dir index according to Grid convention, XYZT
+  int dir = 0;
+
+  if (shift != 0) {
+    assert(U != nullptr);
+  }
 
   switch (shift) {
   case StagAlgebra::G1:
     applyPhase(lhs, rhs);
     break;
   case StagAlgebra::GT:
-    oneLink(lhs, rhs, 3);
-    applyPhase(lhs, lhs);
-    break;
+    dir++;
   case StagAlgebra::GZ:
-    oneLink(lhs, rhs, 2);
-    applyPhase(lhs, lhs);
-    break;
+    dir++;
   case StagAlgebra::GY:
-    oneLink(lhs, rhs, 1);
-    applyPhase(lhs, lhs);
-    break;
+    dir++;
   case StagAlgebra::GX:
-    oneLink(lhs, rhs, 0);
+    oneLink(lhs, rhs, dir);
     applyPhase(lhs, lhs);
     break;
   default:
-    // TODO: Handle all spin-taste shifts
     assert(0);
   }
 }
 
 template <class obj>
 void StagGamma::oneLink(Lattice<obj> &lhs, const Lattice<obj> &rhs,
-                        int shiftdir) const {
+                        int shift_dir) const {
 
+  Lattice<obj> temp(rhs.Grid());
   LatticeColourMatrix Umu(rhs.Grid());
 
   if (rhs.Grid()->_isCheckerBoarded) {
-    Lattice<obj> temp(rhs.Grid());
-    LatticeColourMatrix Umu_full(_U->Grid());
-
-    Umu_full = PeekIndex<LorentzIndex>(*_U, shiftdir);
-
+    LatticeColourMatrix Umu_full(U->Grid());
+    Umu_full = PeekIndex<LorentzIndex>(*U, shift_dir);
     pickCheckerboard(rhs.Checkerboard(), Umu, Umu_full);
-    temp = PeriodicGimplD::CovShiftForward(Umu, shiftdir, rhs);
-
+    temp = adj(Umu) * rhs;
     pickCheckerboard(lhs.Checkerboard(), Umu, Umu_full);
-    lhs = temp + PeriodicGimplD::CovShiftBackward(Umu, shiftdir, rhs);
   } else {
-    Umu = PeekIndex<LorentzIndex>(*_U, shiftdir);
-    lhs = PeriodicGimplD::CovShiftForward(Umu, shiftdir, rhs) +
-          PeriodicGimplD::CovShiftBackward(Umu, shiftdir, rhs);
+    Umu = PeekIndex<LorentzIndex>(*U, shift_dir);
+    temp = adj(Umu) * rhs;
   }
+  lhs = Cshift(temp, shift_dir, -1);
+  temp = Cshift(rhs, shift_dir, 1);
+  lhs += Umu * temp;
+}
+
+inline int StagGamma::getOrientation(StagAlgebra g) {
+  switch (g) {
+    // XYZT convention
+  case StagAlgebra::GZX:
+  // case StagAlgebra::G5X:
+  // case StagAlgebra::G5Z:
+  case StagAlgebra::G5Y:
+  case StagAlgebra::G5T:
+  case StagAlgebra::G5:
+
+    // TXYZ convention
+    // case StagAlgebra::GZX:
+    // case StagAlgebra::GXT:
+    // case StagAlgebra::GYT:
+    // case StagAlgebra::GZT:
+    // case StagAlgebra::G5Y:
+    // case StagAlgebra::G5T:
+    return -1;
+    break;
+  }
+  return 1;
 }
 
 inline void StagGamma::calculateNegation() {
@@ -259,6 +273,7 @@ inline void StagGamma::calculateNegation() {
 }
 
 inline void StagGamma::calculateOscillation() {
+
   _oscillateDirs = LessThan(_taste) ^ GreaterThan(_spin);
 }
 
@@ -276,7 +291,6 @@ inline void StagGamma::calculatePhase() {
     _scaling = 0.5;
     break;
   default:
-    // TODO: Handle all spin-taste shifts
     assert(0);
   }
 
@@ -284,8 +298,10 @@ inline void StagGamma::calculatePhase() {
   calculateOscillation();
   calculateNegation();
 
-  // TODO: Include sign flip for consistent orientation of gammas ( see eqn. A4
-  // of Follana (2007) )
+  // Include sign flip for consistent orientation of gammas ( see eqn. A4 of
+  // Follana (2007) ) if (getOrientation(_spin) != getOrientation(_taste)) {
+  // toggleNegation();
+  // }
 }
 
 template <class obj>
@@ -294,24 +310,24 @@ void StagGamma::applyPhase(Lattice<obj> &lhs, const Lattice<obj> &rhs) const {
   GridBase *grid = lhs.Grid();
 
   Lattice<obj> temp(grid);
-  Lattice<iScalar<vInteger>> coor(grid), negate(grid);
+  Lattice<iScalar<vInteger>> coor(grid), stag_dirs(grid);
   iScalar<vInteger> one = 1;
 
   if (_negated) {
-    negate = one;
+    stag_dirs = one;
   } else {
-    negate = Zero();
+    stag_dirs = Zero();
   }
 
   for (int dir = 0; dir < gmu.size(); dir++) {
     if (gmu[dir] & _oscillateDirs) { // gmu[dir] maps Grid XYZT convention to
                                      // our current binary convention
       LatticeCoordinate(coor, dir);
-      negate += coor;
+      stag_dirs += coor;
     }
   }
 
-  temp = where(mod(negate, 2) == 0, _scaling * rhs, -_scaling * rhs);
+  temp = where(mod(stag_dirs, 2) == 0, _scaling * rhs, -_scaling * rhs);
 
   lhs = std::move(temp);
 }
@@ -320,18 +336,11 @@ inline StagGamma operator*(const StagGamma &g1, const StagGamma &g2) {
 
   StagGamma ret(g1._spin ^ g2._spin, g1._taste ^ g2._taste);
 
-  if (!ret.isLocal()) {
-    if (g1._U != nullptr) {
-      if (g2._U != nullptr) {
-        assert(g2._U == g1._U);
-      }
-      ret.setGaugeField(*(g1._U));
-    } else if (g2._U != nullptr) {
-      ret.setGaugeField(*(g2._U));
-    } else {
-      assert(0);
-    }
+  if (g1.U != nullptr) {
+    assert(g2.U == g1.U);
+    ret.setGaugeField(*(g1.U));
   }
+
   if (g1._negated != g2._negated) {
     ret.toggleNegation();
   }
@@ -359,9 +368,29 @@ inline Lattice<obj> operator*(const StagGamma &g1, const Lattice<obj> &lat) {
 
 template <class obj>
 inline Lattice<obj> operator*(const Lattice<obj> &lat, const StagGamma &g1) {
-  // BUG: This doesn't work properly. Gammas are not commutative with all
-  // lattice fields
   return g1 * lat;
 }
+
+// Array used to keep Grid ordering, XYZT
+
+// XYZT convention
+/*const std::array<const char *, StagGamma::nGamma> StagGamma::name = {{
+     "G1" ,
+     "GT" ,
+     "GZ" ,
+     "GZT",
+     "GY" ,
+     "GYT",
+     "GYZ",
+     "G5X",
+     "GX" ,
+     "GXT",
+     "GZX",
+     "G5Y",
+     "GXY",
+     "G5Z",
+     "G5T",
+     "G5" }};
+     */
 
 NAMESPACE_END(Grid)

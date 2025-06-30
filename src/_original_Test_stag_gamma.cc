@@ -1,5 +1,5 @@
 #include <Grid/Grid.h>
-#include <StagGamma.h>
+#include <_original_StagGamma.h>
 using namespace std;
 using namespace Grid;
 
@@ -92,9 +92,9 @@ int main(int argc, char **argv) {
         {StagGamma::StagAlgebra::GZ,StagGamma::StagAlgebra::GZ}
       };*/
     std::vector<StagGamma::SpinTastePair> gammas = {
-        {StagGamma::StagAlgebra::GX, StagGamma::StagAlgebra::G1},
-        {StagGamma::StagAlgebra::GY, StagGamma::StagAlgebra::G1},
-        {StagGamma::StagAlgebra::GZ, StagGamma::StagAlgebra::G1}};
+        {StagGamma::StagAlgebra::G5, StagGamma::StagAlgebra::G5},
+        {StagGamma::StagAlgebra::GX, StagGamma::StagAlgebra::GX},
+        {StagGamma::StagAlgebra::GX, StagGamma::StagAlgebra::G1}};
 
     // std::vector<StagGamma::SpinTastePair> gammas =
     // {{StagGamma::StagAlgebra::GX,StagGamma::StagAlgebra::G1},
@@ -105,19 +105,19 @@ int main(int argc, char **argv) {
 #if 1
 #if 1
     FieldMetaData header;
-    std::string file("configs/fatlinks.l4444.ildg.20");
+    std::string file("../configs/fatlinks.l4444.ildg.20");
     IldgReader IR;
 
     IR.open(file);
     IR.readConfiguration(U_fat, header);
     IR.close();
 
-    file = "configs/longlinks.l4444.ildg.20";
+    file = "../configs/longlinks.l4444.ildg.20";
     IR.open(file);
     IR.readConfiguration(U_long, header);
     IR.close();
 
-    file = "configs/lat.sample.l4444.ildg.20";
+    file = "../configs/lat.sample.l4444.ildg.20";
     IR.open(file);
     IR.readConfiguration(U, header);
     IR.close();
@@ -316,7 +316,8 @@ int main(int argc, char **argv) {
           stag.Mdag(result2, temp);
           CG(hermOp, temp, result2);
 
-          st5(result2, result2);
+          temp = result2;
+          st5(result2, temp);
 
           PropagatorFieldD temp_CF(result1.Grid()), temp2_CF(result1.Grid());
           ComplexField meson_CF(result1.Grid());
@@ -344,7 +345,7 @@ int main(int argc, char **argv) {
         i++;
       }
     }
-    XmlWriter WR("stag_gamma_output.xml");
+    XmlWriter WR("original_stag_gamma_output.xml");
     write(WR, "MesonFile", MF);
   }
 

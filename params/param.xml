@@ -1,8 +1,11 @@
 <grid>
-        <parameters>
-                <!-- <gammas>(GX G1) (GY G1) (GZ G1)</gammas> -->
-                <!-- <shiftParityOdd>true</shiftParityOdd> -->
-                <gammas>(G5 G5) (GX GX) (GX G1)</gammas>
-                <shiftParityOdd>false</shiftParityOdd>
-        </parameters>
+  <parameters>
+    <free>false</free>
+    <gauge>../configs/lat.sample.l4444.ildg</gauge>
+    <gaugeFat>../configs/fatlinks.l4444.ildg</gaugeFat>
+    <gaugeLong>../configs/longlinks.l4444.ildg</gaugeLong>
+    <!-- <gammas>(GX G1)</gammas> -->
+    <gammas>(G5 G5) (GX GX) (GX G1)</gammas>
+    <trajectory>20</trajectory>
+  </parameters>
 </grid>

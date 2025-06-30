@@ -17,5 +17,8 @@ LDFLAGS=$(shell $(config) --ldflags)
 LIBS= $(shell $(config) --libs) -L$(gridinstall)/lib  -lGrid
 COMPILER=$(shell $(config) --cxx)
 
+original_stag_gamma: ../src/_original_Test_stag_gamma.cc
+	$(COMPILER) -O0 $(INCLUDES) -o $@ $(CXXFLASGS)  ../src/_original_Test_stag_gamma.cc  $(LDFLAGS) $(LIBS) 
+
 stag_gamma: ../src/Test_stag_gamma.cc
 	$(COMPILER) -O0 $(INCLUDES) -o $@ $(CXXFLASGS)  ../src/Test_stag_gamma.cc  $(LDFLAGS) $(LIBS) 

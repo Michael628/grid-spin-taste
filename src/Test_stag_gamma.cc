@@ -1,8 +1,16 @@
 #include <Grid/Grid.h>
 #include <StagGamma.h>
+// #include <_original_StagGamma.h>
 
 using namespace std;
 using namespace Grid;
+
+class GlobalPar : Serializable {
+public:
+  GRID_SERIALIZABLE_CLASS_MEMBERS(GlobalPar, std::string, gauge, std::string,
+                                  gaugeFat, std::string, gaugeLong, bool, free,
+                                  std::string, gammas, int, trajectory);
+};
 
 class MesonFile : Serializable {
 public:
@@ -25,6 +33,12 @@ int main(int argc, char **argv) {
   typedef typename ImprovedStaggeredFermionD::PropagatorField PropagatorFieldD;
   typedef typename ImprovedStaggeredFermionD::FermionField FermionFieldD;
   typedef typename ImprovedStaggeredFermionD::ComplexField ComplexFieldD;
+
+  std::string paramFile = argv[1];
+  XmlReader reader(paramFile, false, "grid");
+
+  GlobalPar inputParams;
+  read(reader, "parameters", inputParams);
   {
     // Create double precision grid layout
     GridCartesian *UGrid = SpaceTimeGrid::makeFourDimGrid(
@@ -47,6 +61,7 @@ int main(int argc, char **argv) {
     // Build checkerboarded grid from full grid
     GridRedBlackCartesian *UrbGrid =
         SpaceTimeGrid::makeFourDimRedBlackGrid(UGrid);
+
     // Create fermion field objects
     FermionFieldD src(UGrid);
     FermionFieldD quark1(UGrid);
@@ -71,43 +86,39 @@ int main(int argc, char **argv) {
     std::vector<std::vector<int>> coors = {{0, 0, 0, 0}};
 
     // List of spin-taste gammas to test
-    std::vector<StagGamma::SpinTastePair> spinTaste = {
-        {StagGamma::StagAlgebra::GX, StagGamma::StagAlgebra::G1},
-        {StagGamma::StagAlgebra::GY, StagGamma::StagAlgebra::G1},
-        {StagGamma::StagAlgebra::GZ, StagGamma::StagAlgebra::G1}};
+    std::vector<StagGamma::SpinTastePair> spinTaste =
+        StagGamma::ParseSpinTaste(inputParams.gammas);
 
     // Set boundary conditions, -1.0 for antiperiodic time
     params.boundary_phases[Tdir] = 1.0;
 
-    std::string workPath("../");
-#if 1
-    // Load smeared links from file
-    FieldMetaData header;
-    std::string file(workPath + "configs/fatlinks.l4444.ildg.20");
-    IldgReader IR;
+    if (!inputParams.free) {
+      int traj = inputParams.trajectory;
+      // Load smeared links from file
+      FieldMetaData header;
+      std::string file(inputParams.gaugeFat + "." + std::to_string(traj));
+      IldgReader IR;
 
-    IR.open(file);
-    IR.readConfiguration(U_fat, header);
-    IR.close();
+      IR.open(file);
+      IR.readConfiguration(U_fat, header);
+      IR.close();
 
-    file = workPath + "configs/longlinks.l4444.ildg.20";
-    IR.open(file);
-    IR.readConfiguration(U_long, header);
-    IR.close();
+      file = inputParams.gaugeLong + "." + std::to_string(traj);
+      IR.open(file);
+      IR.readConfiguration(U_long, header);
+      IR.close();
 
-    file = workPath + "configs/lat.sample.l4444.ildg.20";
-    IR.open(file);
-    IR.readConfiguration(U, header);
-    IR.close();
-
+      file = inputParams.gauge + "." + std::to_string(traj);
+      IR.open(file);
+      IR.readConfiguration(U, header);
+      IR.close();
+    } else {
+      SU3::ColdConfiguration(U_fat);
+      SU3::ColdConfiguration(U);
+      SU3::ColdConfiguration(U_long);
+    }
     // Create Dirac matrix for single and double precision
     ImprovedStaggeredFermionD stag(*UGrid, *UrbGrid, mass, c1, c2, u0, params);
-#else
-    // Create free field
-    SU3::ColdConfiguration(U_fat);
-    SU3::ColdConfiguration(U_long);
-    ImprovedStaggeredFermionD stag(*UGrid, *UrbGrid, mass, c1, c2, u0, params);
-#endif
 
     // Initialize dirac matrix by importing smeared fields
     stag.ImportGaugeSimple(U_long, U_fat);
@@ -122,13 +133,27 @@ int main(int argc, char **argv) {
 
     StagGamma gammaSource, gammaSink;
     StagGamma g5g5(StagGamma::StagAlgebra::G5, StagGamma::StagAlgebra::G5);
+    // TODO: Remove this setgaugefield for g5g5 once StagGamma is updated
+    g5g5.setGaugeField(U);
 
     gammaSource.setGaugeField(U);
     gammaSink.setGaugeField(U);
 
+    ColourVector kronecker;
+    TComplex colorKronecker;
+    colorKronecker = 1.0;
     int i = 0;
     for (auto &st : spinTaste) {
       FieldMetaData header;
+
+      StagGamma gammaSource(st.first, st.second);
+      gammaSource.setSpinTaste(st);
+      gammaSource.setGaugeField(U);
+      gammaSource = gammaSource * g5g5;
+
+      gammaSink.setSpinTaste(st);
+      gammaSink.setGaugeField(U);
+      gammaSink = gammaSink * g5g5;
 
       for (auto &coor : coors) {
         MF[i].data = {0, 0, 0, 0};
@@ -137,17 +162,14 @@ int main(int argc, char **argv) {
 
         for (int j = 0; j < 3; j++) {
 
+          quark1 = Zero();
+          quark2 = Zero();
           src = Zero();
-          ColourVector kronecker;
           kronecker = Zero();
-          TComplex colorKronecker;
-          colorKronecker = 1.0;
+          temp = Zero();
           pokeIndex<ColourIndex>(kronecker, colorKronecker, j);
 
           pokeSite(kronecker, src, coor);
-
-          gammaSource.setSpinTaste(st);
-          gammaSource *= g5g5;
 
           quark1 = gammaSource * src;
           stag.Mdag(quark1, temp);  // temp = Mdag * quark1
@@ -156,7 +178,8 @@ int main(int argc, char **argv) {
           stag.Mdag(src, temp);
           CG(hermOp, temp, quark2);
 
-          quark2 *= gammaSink;
+          gammaSink(quark2, quark2);
+          // quark2 = gammaSink * quark2;
 
           ComplexFieldD meson_CF(quark1.Grid());
           std::vector<TComplex> meson_T;
