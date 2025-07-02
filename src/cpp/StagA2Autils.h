@@ -2,6 +2,7 @@
 // #include <Grid/Hadrons/Global.hpp>
 #include <Grid/Grid_Eigen_Tensor.h>
 #include <StagGamma.h>
+#include <nvtx3/nvToolsExt.h>
 
 NAMESPACE_BEGIN(Grid);
 
@@ -78,6 +79,8 @@ void StagA2Autils<FImpl>::MesonField(
     autoView(SpinMat_v, SpinMat, AcceleratorWrite);
     autoView(lhs_v, lhs_wi[i], AcceleratorRead);
     for (int jo = 0; jo < Rblock; jo += block) {
+
+      nvtxRangePushA("local Inner");
       for (int j = jo; j < MIN(Rblock, jo + block); j++) {
         int jj = j % block;
         autoView(rhs_v, rhs_vj[j], AcceleratorRead);
@@ -92,7 +95,9 @@ void StagA2Autils<FImpl>::MesonField(
         });
 
       } // j within block
+      nvtxRangePop();
       // After getting the sitewise product do the mom phase loop
+      nvtxRangePushA("sliceSum");
       for (int m = 0; m < Nmom; m++) {
 
         for (int mu = 0; mu < Ngamma; mu++) {
@@ -104,6 +109,7 @@ void StagA2Autils<FImpl>::MesonField(
 
           sliceSum(MomSpinMat, sliced, orthogdim);
 
+          nvtxRangePushA("write Eigen");
           for (int t = 0; t < sliced.size(); t++) {
             for (int j = jo; j < MIN(Rblock, jo + block); j++) {
               int jj = j % block;
@@ -111,8 +117,10 @@ void StagA2Autils<FImpl>::MesonField(
               mat(m, mu, t, i, j) = tmp()();
             }
           }
+          nvtxRangePop();
         }
       }
+      nvtxRangePop();
     } // jo
   }
 }

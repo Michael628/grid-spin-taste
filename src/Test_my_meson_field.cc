@@ -28,7 +28,7 @@ directory
 
 // clang-format off
 #include <Grid/Grid.h>
-#include <StagA2Autils.h>
+#include <MyStagA2Autils.h>
 #include <StagGamma.h>
 #include <cuda_profiler_api.h>
 #include <nvtx3/nvToolsExt.h>
@@ -118,15 +118,16 @@ int main(int argc, char *argv[]) {
   // execute meson field routine
   /////////////////////////////////////////////////////////////////////////
   start = usecond();
-  nvtxRangePushA("Grid utils");
+  nvtxRangePushA("My A2A");
   cudaProfilerStart();
-  StagA2Autils<StaggeredImplR>::MesonField(Mpp, &phi[0], &phi[0], Gmu, phases,
-                                           Tp);
+  auto worker = A2AWorkerLocal<StaggeredImplR>(&grid, {}, Gmu, Tp);
+  worker.StagMesonField(Mpp, &phi[0], nullptr, &phi[0], nullptr);
   cudaProfilerStop();
   nvtxRangePop();
   stop = usecond();
   std::cout << GridLogMessage << "M(phi,phi) created, execution time "
             << stop - start << " us" << std::endl;
+
   std::string FileName = "Meson_Fields";
 #ifdef HAVE_HDF5
   using Default_Reader = Grid::Hdf5Reader;
