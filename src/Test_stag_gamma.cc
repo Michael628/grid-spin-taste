@@ -1,6 +1,5 @@
 #include <Grid/Grid.h>
 #include <StagGamma.h>
-// #include <_original_StagGamma.h>
 
 using namespace std;
 using namespace Grid;
@@ -133,8 +132,6 @@ int main(int argc, char **argv) {
 
     StagGamma gammaSource, gammaSink;
     StagGamma g5g5(StagGamma::StagAlgebra::G5, StagGamma::StagAlgebra::G5);
-    // TODO: Remove this setgaugefield for g5g5 once StagGamma is updated
-    g5g5.setGaugeField(U);
 
     gammaSource.setGaugeField(U);
     gammaSink.setGaugeField(U);
@@ -146,7 +143,6 @@ int main(int argc, char **argv) {
     for (auto &st : spinTaste) {
       FieldMetaData header;
 
-      StagGamma gammaSource(st.first, st.second);
       gammaSource.setSpinTaste(st);
       gammaSource.setGaugeField(U);
       gammaSource = gammaSource * g5g5;
@@ -172,14 +168,14 @@ int main(int argc, char **argv) {
           pokeSite(kronecker, src, coor);
 
           quark1 = gammaSource * src;
+
           stag.Mdag(quark1, temp);  // temp = Mdag * quark1
           CG(hermOp, temp, quark1); // Solve hermop * quark1 = temp
 
           stag.Mdag(src, temp);
           CG(hermOp, temp, quark2);
 
-          gammaSink(quark2, quark2);
-          // quark2 = gammaSink * quark2;
+          quark2 = gammaSink * quark2;
 
           ComplexFieldD meson_CF(quark1.Grid());
           std::vector<TComplex> meson_T;
