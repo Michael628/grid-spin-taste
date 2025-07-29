@@ -40,20 +40,22 @@ int main(int argc, char **argv) {
   read(reader, "parameters", inputParams);
   {
     // Create double precision grid layout
+    auto latt = GridDefaultLatt(); // Lattice size, specified by run-time flag:
+                                   // --grid x.y.z.t
     GridCartesian *UGrid = SpaceTimeGrid::makeFourDimGrid(
-        GridDefaultLatt(), // Lattice size, specified by run-time flag:
-                           // --grid x.y.z.t
+        latt,
 
         GridDefaultSimd(
             Nd,
-            vComplexD::Nsimd()), // Specifies how to split the lattice based on
-                                 // how many vectorized (SIMD) operations can be
-                                 // done at the same time on the given CPU
-                                 // hardware. Since vectorized instructions have
-                                 // a fixed bit width (512 bits, for example),
-                                 // this depends on the data type you want
-                                 // to vectorize (eg, 512 bits can fit 4 double
-                                 // precision complex numbers)
+            vComplexD::Nsimd()), // Specifies how to split the lattice based
+                                 // on how many vectorized (SIMD) operations
+                                 // can be done at the same time on the
+                                 // given CPU hardware. Since vectorized
+                                 // instructions have a fixed bit width (512
+                                 // bits, for example), this depends on the
+                                 // data type you want to vectorize (eg, 512
+                                 // bits can fit 4 double precision complex
+                                 // numbers)
         GridDefaultMpi());       // lattice blocks distributed over mpi ranks,
                                  // specified by run-time flag: --mpi x.y.z.t
 
@@ -127,7 +129,6 @@ int main(int argc, char **argv) {
 
     ConjugateGradient<FermionFieldD> CG(1.0e-15, 10000);
 
-    Coordinate ocoor(4, 0);
     MF.resize(spinTaste.size() * coors.size());
 
     StagGamma gammaSource, gammaSink;
@@ -152,8 +153,8 @@ int main(int argc, char **argv) {
       gammaSink = gammaSink * g5g5;
 
       for (auto &coor : coors) {
-        MF[i].data = {0, 0, 0, 0};
-        MF[i].gammaName = StagGamma::GetName(st);
+        MF[i].data.resize(latt[Tdir], 0.0);
+        StagGamma::GetName(st);
         MF[i].coor = vecToStr(coor);
 
         for (int j = 0; j < 3; j++) {
