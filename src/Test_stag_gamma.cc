@@ -84,14 +84,21 @@ int main(int argc, char **argv) {
     std::vector<MesonFile> MF;
 
     // List of lattice point source locations to test
-    std::vector<std::vector<int>> coors = {{0, 0, 0, 0}};
+    std::vector<std::vector<int>> coors = {
+        {0, 0, 0, 0},
+        // {2, 0, 0, 0},
+        // {1, 0, 0, 0},
+        // {3, 0, 0, 0},
+        // {4, 0, 0, 0},
+        // {5, 0, 0, 0},
+    };
 
     // List of spin-taste gammas to test
-    std::vector<StagGamma::SpinTastePair> spinTaste =
+    std::vector<StagGamma::SpinTastePair> spinTastes =
         StagGamma::ParseSpinTaste(inputParams.gammas);
 
     // Set boundary conditions, -1.0 for antiperiodic time
-    params.boundary_phases[Tdir] = 1.0;
+    params.boundary_phases[Tdir] = -1.0;
 
     if (!inputParams.free) {
       int traj = inputParams.trajectory;
@@ -127,75 +134,112 @@ int main(int argc, char **argv) {
     // Instanciate hermitian operators for single and double precision
     MdagMLinearOperator<ImprovedStaggeredFermionD, FermionFieldD> hermOp(stag);
 
-    ConjugateGradient<FermionFieldD> CG(1.0e-15, 10000);
+    // Instanciate conjugate gradient solver for double recision
+    ConjugateGradient<FermionFieldD> CG(1.0e-15, 10000); // (tol, max_iter)
 
-    MF.resize(spinTaste.size() * coors.size());
+    // Initialize output vector
+    MF.resize(spinTastes.size() * coors.size());
 
+    // Instanciate gamma sources and sinks
     StagGamma gammaSource, gammaSink;
     StagGamma g5g5(StagGamma::StagAlgebra::G5, StagGamma::StagAlgebra::G5);
 
+    // Set gauge field to be used for Cshifts
     gammaSource.setGaugeField(U);
     gammaSink.setGaugeField(U);
 
-    ColourVector kronecker;
+    // Just a complex number wrapper...
     TComplex colorKronecker;
     colorKronecker = 1.0;
-    int i = 0;
-    for (auto &st : spinTaste) {
-      FieldMetaData header;
 
+    // A colour vector of complex numbers
+    ColourVector kronecker;
+
+    int i = 0;
+    for (StagGamma::SpinTastePair &st : spinTastes) {
+
+      // Update StagGamma object with new `source` spin-taste
       gammaSource.setSpinTaste(st);
       gammaSource.setGaugeField(U);
       gammaSource = gammaSource * g5g5;
 
+      // Update StagGamma object with new `sink` spin-taste
       gammaSink.setSpinTaste(st);
       gammaSink.setGaugeField(U);
       gammaSink = gammaSink * g5g5;
 
+      // Loop over lattice point coordinates
       for (auto &coor : coors) {
-        MF[i].data.resize(latt[Tdir], 0.0);
-        StagGamma::GetName(st);
+
+        // Initialize MesonFile for coor, spin-taste combination
+        MF[i].data.resize(latt[Tdir], 0.0); // (new_size, initial_value)
+        MF[i].gammaName = StagGamma::GetName(st);
         MF[i].coor = vecToStr(coor);
 
+        // Average over point source prop for each color index
         for (int j = 0; j < 3; j++) {
 
+          // Zero out the color vector delta
+          kronecker = Zero();
+
+          // Zero out all fields for next CG solve
           quark1 = Zero();
           quark2 = Zero();
           src = Zero();
-          kronecker = Zero();
           temp = Zero();
+
+          // kronecker[j] = 1.0
           pokeIndex<ColourIndex>(kronecker, colorKronecker, j);
 
+          // src[coor] = kronecker
           pokeSite(kronecker, src, coor);
 
+          // Multiply source field by source gamma
           quark1 = gammaSource * src;
 
-          stag.Mdag(quark1, temp);  // temp = Mdag * quark1
-          CG(hermOp, temp, quark1); // Solve hermop * quark1 = temp
+          // temp = Mdag * quark1
+          stag.Mdag(quark1, temp);
 
+          // Solve Mdag*M * quark1 = Mdag*quark1
+          // Note: hermop = Mdag*M
+          CG(hermOp, temp,
+             quark1); // Performs CG solve, stores result in quark1
+
+          // Repeat for `antiquark`
+          // Note: no gamma applied yet
           stag.Mdag(src, temp);
-          CG(hermOp, temp, quark2);
+          CG(hermOp, temp,
+             quark2); // Performs CG solve, stores result in quark2
 
+          // Multiply `antiquark` field by sink gamma
           quark2 = gammaSink * quark2;
 
+          // Initialize lattice of complex numbers
           ComplexFieldD meson_CF(quark1.Grid());
+
+          // Inner product over all internal indices (here: color),
+          // no spatial sum
+          meson_CF = localInnerProduct(quark2, quark1);
+
+          // Initialize SIMD vector of complex numbers
           std::vector<TComplex> meson_T;
 
-          meson_CF = localInnerProduct(quark2, quark1);
+          // Sum over spatial indices of lattice, not time
           sliceSum(meson_CF, meson_T, Tdir);
 
           int nt = meson_T.size();
           int shift = coor[Tdir];
           int offset;
           std::vector<Complex> corr(nt, 0);
-          std::cout << " channel (";
+          std::cout << MF[i].gammaName << ", coor: " << MF[i].coor
+                    << ", nt: " << nt << ", j: " << j << " channel (";
 
           for (int t = 0; t < nt; t++) {
             offset = (shift + t) % nt;
             corr[t] = TensorRemove(meson_T[offset]);
             std::cout << corr[t].real() << ", ";
           }
-          std::cout << std::endl;
+          std::cout << ")" << std::endl;
 
           for (int t = 0; t < nt; t++) {
             MF[i].data[t] += corr[t];
