@@ -4,12 +4,20 @@
 using namespace std;
 using namespace Grid;
 
+// clang-format off
 class GlobalPar : Serializable {
 public:
-  GRID_SERIALIZABLE_CLASS_MEMBERS(GlobalPar, std::string, gauge, std::string,
-                                  gaugeFat, std::string, gaugeLong, bool, free,
-                                  std::string, gammas, int, trajectory);
+  GRID_SERIALIZABLE_CLASS_MEMBERS(GlobalPar, 
+                                  std::string, gauge, 
+                                  std::string, gaugeFat, 
+                                  std::string, gaugeLong, 
+                                  Real, mass,
+                                  bool, free,
+                                  std::string, gammas, 
+                                  std::string, writeFile, 
+                                  int, trajectory);
 };
+// clang-format on
 
 class MesonFile : Serializable {
 public:
@@ -42,6 +50,16 @@ int main(int argc, char **argv) {
     // Create double precision grid layout
     auto latt = GridDefaultLatt(); // Lattice size, specified by run-time flag:
                                    // --grid x.y.z.t
+
+    // Calculate spatial volume
+    int spatial_volume = 1;
+    for (int i = 0; i < Nd; i++) {
+      if (i == Tdir) {
+        continue;
+      }
+      spatial_volume *= latt[i];
+    }
+
     GridCartesian *UGrid = SpaceTimeGrid::makeFourDimGrid(
         latt,
 
@@ -78,7 +96,7 @@ int main(int argc, char **argv) {
     LatticeColourMatrixD Umu(UGrid);
 
     // Coefficients for HISQ action (with MILC factors of 2)
-    RealD mass = 2 * 0.1, c1 = 2 * 1.0, c2 = 2 * 1.0, u0 = 1.0;
+    RealD mass = 2. * inputParams.mass, c1 = 2. * 1.0, c2 = 2. * 1.0, u0 = 1.0;
 
     // Storage for saving final results
     std::vector<MesonFile> MF;
@@ -145,8 +163,10 @@ int main(int argc, char **argv) {
     StagGamma g5g5(StagGamma::StagAlgebra::G5, StagGamma::StagAlgebra::G5);
 
     // Set gauge field to be used for Cshifts
-    gammaSource.setGaugeField(U);
-    gammaSink.setGaugeField(U);
+    // TODO: Make this work properly. I.e. set gauge field once and copy pointer
+    // on modification
+    // gammaSource.setGaugeField(U);
+    // gammaSink.setGaugeField(U);
 
     // Just a complex number wrapper...
     TComplex colorKronecker;
@@ -177,7 +197,7 @@ int main(int argc, char **argv) {
         MF[i].coor = vecToStr(coor);
 
         // Average over point source prop for each color index
-        for (int j = 0; j < 3; j++) {
+        for (int j = 0; j < Nc; j++) {
 
           // Zero out the color vector delta
           kronecker = Zero();
@@ -242,13 +262,13 @@ int main(int argc, char **argv) {
           std::cout << ")" << std::endl;
 
           for (int t = 0; t < nt; t++) {
-            MF[i].data[t] += corr[t];
+            MF[i].data[t] += (corr[t] / double(Nc * spatial_volume));
           }
         }
         i++;
       }
     }
-    XmlWriter WR("stag_gamma_output.xml");
+    XmlWriter WR(inputParams.writeFile + ".xml");
     write(WR, "MesonFile", MF);
   }
 
