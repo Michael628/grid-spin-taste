@@ -20,6 +20,19 @@ int main(int argc, char **argv) {
 
   const int Ls = 1;
 
+  // Create double precision grid layout
+  auto latt = GridDefaultLatt(); // Lattice size, specified by run-time flag:
+                                 // --grid x.y.z.t
+
+  // Calculate spatial volume
+  int spatial_volume = 1;
+  for (int i = 0; i < Nd; i++) {
+    if (i == Tdir) {
+      continue;
+    }
+    spatial_volume *= latt[i];
+  }
+
 #if 1
   typename ImprovedStaggeredFermionD::ImplParams params;
   typedef typename ImprovedStaggeredFermionD::PropagatorField PropagatorFieldD;
@@ -59,7 +72,7 @@ int main(int argc, char **argv) {
     LatticeGaugeFieldF U_longf(UGrid_f);
     LatticeColourMatrixD Umu(UGrid);
 
-    RealD mass = 2 * 0.1, c1 = 2 * 1.0, c2 = 2 * 1.0, u0 = 1.0;
+    RealD mass = 2 * 0.05, c1 = 2 * 1.0, c2 = 2 * 1.0, u0 = 1.0;
 
     std::vector<MesonFile> MF;
 
@@ -103,7 +116,7 @@ int main(int argc, char **argv) {
 
     params.boundary_phases[Tdir] = 1.0;
 #if 1
-#if 1
+#if 0
     FieldMetaData header;
     std::string file("../configs/fatlinks.l4444.ildg.20");
     IldgReader IR;
@@ -271,11 +284,11 @@ int main(int argc, char **argv) {
       // std::string file("configs/lat.sample.l4444.ildg.20");
       // std::string file("configs/milc.l4448.ildg.50");
       for (auto &coor : coors) {
-        MF[i].data = {0, 0, 0, 0};
+        MF[i].data.resize(latt[Tdir], 0.0); // (new_size, initial_value)
         MF[i].gammaName = StagGamma::GetName(g);
         MF[i].coor = vecToStr(coor);
 
-        for (int j = 0; j < 3; j++) {
+        for (int j = 0; j < Nc; j++) {
 
           Coordinate ocoor(4, 0);
           Coordinate coor1, coor2;

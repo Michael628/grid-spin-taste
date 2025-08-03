@@ -1,13 +1,15 @@
 <grid>
   <parameters>
-    <free>true</free>
-    <gauge>../configs/lat.sample.l4444.ildg</gauge>
-    <gaugeFat>../configs/fatlinks.l4444.ildg</gaugeFat>
-    <gaugeLong>../configs/longlinks.l4444.ildg</gaugeLong>
+    <gauge>configs/l8888_free.ildg</gauge>
+    <gaugeFat>configs/fat8888_free.ildg</gaugeFat>
+    <gaugeLong>configs/lng8888_free.ildg</gaugeLong>
+    <!-- <gauge>../configs/lat.sample.l4444.ildg</gauge> -->
+    <!-- <gaugeFat>../configs/fatlinks.l4444.ildg</gaugeFat> -->
+    <!-- <gaugeLong>../configs/longlinks.l4444.ildg</gaugeLong> -->
     <!-- <gammas>(GX G1)</gammas> -->
     <gammas>(G5 G5) (GX GX) (GX G1)</gammas>
-    <mass>0.05</mass>
+    <mass>0.1</mass>
     <writeFile>stag_gamma_output</writeFile>
-    <trajectory>20</trajectory>
+    <trajectory></trajectory>
   </parameters>
 </grid>

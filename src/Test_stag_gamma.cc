@@ -12,10 +12,10 @@ public:
                                   std::string, gaugeFat, 
                                   std::string, gaugeLong, 
                                   Real, mass,
-                                  bool, free,
+                                  // bool, free,
                                   std::string, gammas, 
                                   std::string, writeFile, 
-                                  int, trajectory);
+                                  std::string, trajectory);
 };
 // clang-format on
 
@@ -37,6 +37,9 @@ int main(int argc, char **argv) {
   const int Ls = 1;
 
   typename ImprovedStaggeredFermionD::ImplParams params;
+  typedef typename ImprovedStaggeredFermionD::SitePropagator::scalar_object
+      SitePropagator;
+  typedef typename ImprovedStaggeredFermionD::Impl_t FImpl;
   typedef typename ImprovedStaggeredFermionD::PropagatorField PropagatorFieldD;
   typedef typename ImprovedStaggeredFermionD::FermionField FermionFieldD;
   typedef typename ImprovedStaggeredFermionD::ComplexField ComplexFieldD;
@@ -82,9 +85,11 @@ int main(int argc, char **argv) {
         SpaceTimeGrid::makeFourDimRedBlackGrid(UGrid);
 
     // Create fermion field objects
-    FermionFieldD src(UGrid);
-    FermionFieldD quark1(UGrid);
-    FermionFieldD quark2(UGrid);
+    FermionFieldD source(UGrid);
+    FermionFieldD solution(UGrid);
+    PropagatorFieldD quark1(UGrid);
+    PropagatorFieldD quark2(UGrid);
+    ComplexFieldD result(UGrid);
     FermionFieldD temp(UGrid);
 
     // Create double precision gauge field objects (4 links per site)
@@ -102,47 +107,121 @@ int main(int argc, char **argv) {
     std::vector<MesonFile> MF;
 
     // List of lattice point source locations to test
+    // clang-format off
     std::vector<std::vector<int>> coors = {
-        {0, 0, 0, 0},
-        // {2, 0, 0, 0},
-        // {1, 0, 0, 0},
-        // {3, 0, 0, 0},
-        // {4, 0, 0, 0},
-        // {5, 0, 0, 0},
+      {0, 0, 0, 0},
+      // {0, 0, 0, 1},
+      // {0, 0, 1, 0},
+      // {0, 0, 1, 1},
+      // {0, 1, 0, 0},
+      // {0, 1, 0, 1},
+      // {0, 1, 1, 0},
+      // {0, 1, 1, 1},
+      // {1, 0, 0, 0},
+      // {1, 0, 0, 1},
+      // {1, 0, 1, 0},
+      // {1, 0, 1, 1},
+      // {1, 1, 0, 0},
+      // {1, 1, 0, 1},
+      // {1, 1, 1, 0},
+      // {1, 1, 1, 1},
     };
+    // clang-format on
 
     // List of spin-taste gammas to test
     std::vector<StagGamma::SpinTastePair> spinTastes =
         StagGamma::ParseSpinTaste(inputParams.gammas);
 
     // Set boundary conditions, -1.0 for antiperiodic time
-    params.boundary_phases[Tdir] = -1.0;
+    // WARN: does nothing
+    // params.boundary_phases[Tdir] = 1.0;
 
-    if (!inputParams.free) {
-      int traj = inputParams.trajectory;
-      // Load smeared links from file
-      FieldMetaData header;
-      std::string file(inputParams.gaugeFat + "." + std::to_string(traj));
-      IldgReader IR;
+    std::string trajSuffix = !inputParams.trajectory.empty()
+                                 ? std::string(".") + inputParams.trajectory
+                                 : std::string("");
 
-      IR.open(file);
-      IR.readConfiguration(U_fat, header);
-      IR.close();
+    // Load smeared links from file
+    FieldMetaData header;
+    std::string file(inputParams.gaugeFat + trajSuffix);
+    IldgReader IR;
 
-      file = inputParams.gaugeLong + "." + std::to_string(traj);
-      IR.open(file);
-      IR.readConfiguration(U_long, header);
-      IR.close();
+    IR.open(file);
+    IR.readConfiguration(U_fat, header);
+    IR.close();
 
-      file = inputParams.gauge + "." + std::to_string(traj);
-      IR.open(file);
-      IR.readConfiguration(U, header);
-      IR.close();
-    } else {
-      SU3::ColdConfiguration(U_fat);
-      SU3::ColdConfiguration(U);
-      SU3::ColdConfiguration(U_long);
-    }
+    file = inputParams.gaugeLong + trajSuffix;
+    IR.open(file);
+    IR.readConfiguration(U_long, header);
+    IR.close();
+
+    file = inputParams.gauge + trajSuffix;
+    IR.open(file);
+    IR.readConfiguration(U, header);
+    IR.close();
+
+    // WARN: Free field implementation below. Does not work.
+    /*
+     * SU3::ColdConfiguration(U_fat);
+     * SU3::ColdConfiguration(U);
+     * SU3::ColdConfiguration(U_long);
+     *
+     * LatticeComplexD eta_mu(UGrid);
+     *
+     * // Create lattices of integers
+     * Lattice<iScalar<vInteger>> x(UGrid);
+     * Lattice<iScalar<vInteger>> y(UGrid);
+     * Lattice<iScalar<vInteger>> z(UGrid);
+     * Lattice<iScalar<vInteger>> t(UGrid);
+     *
+     * // Hold the corresponding index direction in each lattice of ints
+     * LatticeCoordinate(x, Xdir);
+     * LatticeCoordinate(y, Ydir);
+     * LatticeCoordinate(z, Zdir);
+     * LatticeCoordinate(t, Tdir);
+     *
+     * // for TXYZ coordinate convention
+     * Lattice<iScalar<vInteger>> eta_exp_x(UGrid);
+     * Lattice<iScalar<vInteger>> eta_exp_y(UGrid);
+     * Lattice<iScalar<vInteger>> eta_exp_z(UGrid);
+     * eta_exp_x = t;
+     * eta_exp_y = t + x;
+     * eta_exp_z = t + x + y;
+     *
+     * // for XYZT coordinate convention
+     * Lattice<iScalar<vInteger>> eta_exp_y_alt(UGrid);
+     * Lattice<iScalar<vInteger>> eta_exp_z_alt(UGrid);
+     * Lattice<iScalar<vInteger>> eta_exp_t_alt(UGrid);
+     * eta_exp_y_alt = x;
+     * eta_exp_z_alt = x + y;
+     * eta_exp_t_alt = x + y + z;
+     *
+     * for (int mu = 0; mu < Nd; mu++) {
+     *   eta_mu = 1.0;
+     *   // if (mu == Ydir)
+     *   //   KSphases =
+     *   //       where(mod(eta_exp_y_alt, 2) == (Integer)0, KSphases,
+     *   //       -KSphases);
+     *   // if (mu == Zdir)
+     *   //   KSphases =
+     *   //       where(mod(eta_exp_z_alt, 2) == (Integer)0, KSphases,
+     *   //       -KSphases);
+     *   // if (mu == Tdir)
+     *   //   KSphases =
+     *   //       where(mod(eta_exp_t_alt, 2) == (Integer)0, KSphases,
+     *   //       -KSphases);
+     *   if (mu == Xdir)
+     *     eta_mu = where(mod(eta_exp_x, 2) == (Integer)0, eta_mu, -eta_mu);
+     *   if (mu == Ydir)
+     *     eta_mu = where(mod(eta_exp_y, 2) == (Integer)0, eta_mu, -eta_mu);
+     *   if (mu == Zdir)
+     *     eta_mu = where(mod(eta_exp_z, 2) == (Integer)0, eta_mu, -eta_mu);
+     *   Umu = PeekIndex<LorentzIndex>(U_long, mu);
+     *   Umu = Umu * eta_mu;
+     *   PokeIndex<LorentzIndex>(U_long, Umu, mu);
+     * }
+     * U_fat = U_long;
+     */
+
     // Create Dirac matrix for single and double precision
     ImprovedStaggeredFermionD stag(*UGrid, *UrbGrid, mass, c1, c2, u0, params);
 
@@ -162,18 +241,11 @@ int main(int argc, char **argv) {
     StagGamma gammaSource, gammaSink;
     StagGamma g5g5(StagGamma::StagAlgebra::G5, StagGamma::StagAlgebra::G5);
 
-    // Set gauge field to be used for Cshifts
     // TODO: Make this work properly. I.e. set gauge field once and copy pointer
     // on modification
+    // Set gauge field to be used for Cshifts
     // gammaSource.setGaugeField(U);
     // gammaSink.setGaugeField(U);
-
-    // Just a complex number wrapper...
-    TComplex colorKronecker;
-    colorKronecker = 1.0;
-
-    // A colour vector of complex numbers
-    ColourVector kronecker;
 
     int i = 0;
     for (StagGamma::SpinTastePair &st : spinTastes) {
@@ -196,74 +268,74 @@ int main(int argc, char **argv) {
         MF[i].gammaName = StagGamma::GetName(st);
         MF[i].coor = vecToStr(coor);
 
+        quark1 = Zero();
+        quark2 = Zero();
+
+        // Set internal dims (3x3 color matrix) of quark fields to the identity
+        SitePropagator identity;
+        identity = 1.0;
+        pokeSite(identity, quark1, coor);
+        pokeSite(identity, quark2, coor);
+
+        // Multiply source field by source gamma
+        quark1 = gammaSource * quark1;
+
         // Average over point source prop for each color index
-        for (int j = 0; j < Nc; j++) {
+        for (int colorIndex = 0; colorIndex < Nc; colorIndex++) {
 
-          // Zero out the color vector delta
-          kronecker = Zero();
-
-          // Zero out all fields for next CG solve
-          quark1 = Zero();
-          quark2 = Zero();
-          src = Zero();
-          temp = Zero();
-
-          // kronecker[j] = 1.0
-          pokeIndex<ColourIndex>(kronecker, colorKronecker, j);
-
-          // src[coor] = kronecker
-          pokeSite(kronecker, src, coor);
-
-          // Multiply source field by source gamma
-          quark1 = gammaSource * src;
+          // Pick one color index from source field
+          PropToFerm<FImpl>(source, quark1, colorIndex);
 
           // temp = Mdag * quark1
-          stag.Mdag(quark1, temp);
+          stag.Mdag(source, temp);
 
-          // Solve Mdag*M * quark1 = Mdag*quark1
+          // Mdag*M * solution = Mdag*source
           // Note: hermop = Mdag*M
           CG(hermOp, temp,
-             quark1); // Performs CG solve, stores result in quark1
+             solution); // Performs CG solve
+
+          // Store result in quark1
+          FermToProp<FImpl>(quark1, solution, colorIndex);
 
           // Repeat for `antiquark`
-          // Note: no gamma applied yet
-          stag.Mdag(src, temp);
+          PropToFerm<FImpl>(source, quark2, colorIndex);
+
+          // temp = Mdag * source
+          stag.Mdag(source, temp);
+
+          // Mdag*M * solution = Mdag*source
           CG(hermOp, temp,
-             quark2); // Performs CG solve, stores result in quark2
+             solution); // Performs CG solve
 
-          // Multiply `antiquark` field by sink gamma
-          quark2 = gammaSink * quark2;
+          // Store result in quark2
+          FermToProp<FImpl>(quark2, solution, colorIndex);
+        }
 
-          // Initialize lattice of complex numbers
-          ComplexFieldD meson_CF(quark1.Grid());
+        // Multiply by sink gamma and take color trace of outer product
+        // |quark2><quark1|
+        result = trace(gammaSink * quark2 * adj(quark1));
 
-          // Inner product over all internal indices (here: color),
-          // no spatial sum
-          meson_CF = localInnerProduct(quark2, quark1);
+        // Initialize SIMD vector of complex numbers
+        std::vector<TComplex> meson_T;
 
-          // Initialize SIMD vector of complex numbers
-          std::vector<TComplex> meson_T;
+        sliceSum(result, meson_T, Tdir);
 
-          // Sum over spatial indices of lattice, not time
-          sliceSum(meson_CF, meson_T, Tdir);
+        int nt = meson_T.size();
+        int shift = coor[Tdir];
+        int offset;
+        std::vector<Complex> corr(nt, 0);
+        std::cout << MF[i].gammaName << ", coor: " << MF[i].coor
+                  << ", nt: " << nt << " channel (";
 
-          int nt = meson_T.size();
-          int shift = coor[Tdir];
-          int offset;
-          std::vector<Complex> corr(nt, 0);
-          std::cout << MF[i].gammaName << ", coor: " << MF[i].coor
-                    << ", nt: " << nt << ", j: " << j << " channel (";
+        for (int t = 0; t < nt; t++) {
+          offset = (shift + t) % nt;
+          corr[t] = TensorRemove(meson_T[offset]);
+          std::cout << corr[t].real() << ", ";
+        }
+        std::cout << ")" << std::endl;
 
-          for (int t = 0; t < nt; t++) {
-            offset = (shift + t) % nt;
-            corr[t] = TensorRemove(meson_T[offset]);
-            std::cout << corr[t].real() << ", ";
-          }
-          std::cout << ")" << std::endl;
-
-          for (int t = 0; t < nt; t++) {
-            MF[i].data[t] += (corr[t] / double(Nc * spatial_volume));
-          }
+        for (int t = 0; t < nt; t++) {
+          MF[i].data[t] += corr[t];
         }
         i++;
       }
