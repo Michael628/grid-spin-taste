@@ -1,0 +1,11 @@
+<grid>
+  <parameters>
+    <gauge>configs/l4444_free.ildg</gauge>
+    <gaugeFat>configs/fat4444_free.ildg</gaugeFat>
+    <gaugeLong>configs/lng4444_free.ildg</gaugeLong>
+    <gammas>(G5 G5) (GX GX) (GX G1)</gammas>
+    <mass>0.1</mass>
+    <writeFile>out/output_free_l4444</writeFile>
+    <trajectory></trajectory>
+  </parameters>
+</grid>

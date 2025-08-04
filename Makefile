@@ -1,7 +1,7 @@
 # Main Makefile for stag_gamma project
 # This orchestrates configuration, building and running the stag_gamma executable
 
-.PHONY: configure build clean distclean run run-free run-l4444 run-with-args help
+.PHONY: configure build clean distclean run run-free run-l4444-free run-l6666-free run-l8888-free run-l4444 run-with-args help
 
 # Default target
 all: build
@@ -34,10 +34,21 @@ distclean: clean
 	rm -rf autom4te.cache
 	rm -f build/Makefile
 
-# Run with param_free_l8888.xml (8x8x8x8 lattice)
-run-free: build
+# Free field run targets
+run-l4444-free: build
+	@echo "Running stag_gamma with free field parameters (4x4x4x4 lattice)..."
+	cd test && ../build/stag_gamma params/param_free_l4444.xml --grid 4.4.4.4
+
+run-l6666-free: build
+	@echo "Running stag_gamma with free field parameters (6x6x6x6 lattice)..."
+	cd test && ../build/stag_gamma params/param_free_l6666.xml --grid 6.6.6.6
+
+run-l8888-free: build
 	@echo "Running stag_gamma with free field parameters (8x8x8x8 lattice)..."
 	cd test && ../build/stag_gamma params/param_free_l8888.xml --grid 8.8.8.8
+
+# Alias for backward compatibility
+run-free: run-l8888-free
 
 # Run with param_l4444.xml (4x4x4x4 lattice)  
 run-l4444: build
@@ -59,8 +70,17 @@ run-with-args: build
 # Convenience alias for run-with-args
 run: 
 	@echo "Available run targets:"
-	@echo "  make run-free     - Run with param_free_l8888.xml (8x8x8x8)"
-	@echo "  make run-l4444    - Run with param_l4444.xml (4x4x4x4)"
+	@echo ""
+	@echo "Free field runs:"
+	@echo "  make run-l4444-free - Run with free field parameters (4x4x4x4)"
+	@echo "  make run-l6666-free - Run with free field parameters (6x6x6x6)"
+	@echo "  make run-l8888-free - Run with free field parameters (8x8x8x8)"
+	@echo "  make run-free       - Alias for run-l8888-free"
+	@echo ""
+	@echo "Interacting field runs:"
+	@echo "  make run-l4444      - Run with interacting field parameters (4x4x4x4)"
+	@echo ""
+	@echo "Custom runs:"
 	@echo "  make run-with-args PARAM=file.xml GRID=x.y.z.t - Run with custom parameters"
 	@echo ""
 	@echo "Example: make run-with-args PARAM=param_l4444.xml GRID=4.4.4.4"
@@ -68,15 +88,24 @@ run:
 # Help target
 help:
 	@echo "Available targets:"
-	@echo "  configure     - Generate and run configure script"
-	@echo "  build         - Compile the stag_gamma executable"
-	@echo "  clean         - Clean build artifacts"
-	@echo "  distclean     - Clean everything including configure files"
-	@echo "  run-free      - Run with free field parameters (8x8x8x8)"
-	@echo "  run-l4444     - Run with l4444 parameters (4x4x4x4)"
-	@echo "  run-with-args - Run with custom PARAM and GRID arguments"
-	@echo "  run           - Show available run options"
-	@echo "  help          - Show this help message"
+	@echo "  configure       - Generate and run configure script"
+	@echo "  build           - Compile the stag_gamma executable"
+	@echo "  clean           - Clean build artifacts"
+	@echo "  distclean       - Clean everything including configure files"
+	@echo ""
+	@echo "Free field runs:"
+	@echo "  run-l4444-free  - Run with free field parameters (4x4x4x4)"
+	@echo "  run-l6666-free  - Run with free field parameters (6x6x6x6)"
+	@echo "  run-l8888-free  - Run with free field parameters (8x8x8x8)"
+	@echo "  run-free        - Alias for run-l8888-free"
+	@echo ""
+	@echo "Interacting field runs:"
+	@echo "  run-l4444       - Run with interacting field parameters (4x4x4x4)"
+	@echo ""
+	@echo "Custom runs:"
+	@echo "  run-with-args   - Run with custom PARAM and GRID arguments"
+	@echo "  run             - Show available run options"
+	@echo "  help            - Show this help message"
 	@echo ""
 	@echo "Configuration options:"
 	@echo "  ./configure --with-grid=PATH        - Specify Grid installation path"

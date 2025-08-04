@@ -1,0 +1,11 @@
+<grid>
+  <parameters>
+    <gauge>configs/l6666_free.ildg</gauge>
+    <gaugeFat>configs/fat6666_free.ildg</gaugeFat>
+    <gaugeLong>configs/lng6666_free.ildg</gaugeLong>
+    <gammas>(G5 G5) (GX GX) (GX G1)</gammas>
+    <mass>0.1</mass>
+    <writeFile>out/output_free_l6666</writeFile>
+    <trajectory></trajectory>
+  </parameters>
+</grid>
