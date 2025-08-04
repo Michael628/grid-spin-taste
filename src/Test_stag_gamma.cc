@@ -1,5 +1,6 @@
 #include <Grid/Grid.h>
 #include <StagGamma.h>
+#include <filesystem>
 
 using namespace std;
 using namespace Grid;
@@ -340,6 +341,10 @@ int main(int argc, char **argv) {
         i++;
       }
     }
+    // Create directory if it doesn't exist
+    std::filesystem::path p(inputParams.writeFile + ".xml");
+    std::filesystem::create_directories(p.parent_path());
+
     XmlWriter WR(inputParams.writeFile + ".xml");
     write(WR, "MesonFile", MF);
   }

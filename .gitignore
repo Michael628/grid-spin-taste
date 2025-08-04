@@ -1,6 +1,14 @@
 build/*
-!build/Makefile
+!build/Makefile.in
+test/*
+!test/configs
+!test/params
 .clangd
 .cache
-*.xml
 .vscode
+
+# Autoconf generated files
+configure
+config.log
+config.status
+autom4te.cache/
