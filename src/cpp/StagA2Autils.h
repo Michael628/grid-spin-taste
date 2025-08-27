@@ -48,6 +48,7 @@ void StagA2Autils<FImpl>::MesonField(
     std::vector<StagGamma::SpinTastePair> gammas,
     const std::vector<ComplexField> &mom, int orthogdim, double *t_kernel,
     double *t_gsum) {
+
   const int block = stagA2Ablocking;
   typedef typename FImpl::SiteSpinor vobj;
 
@@ -79,7 +80,6 @@ void StagA2Autils<FImpl>::MesonField(
     autoView(SpinMat_v, SpinMat, AcceleratorWrite);
     autoView(lhs_v, lhs_wi[i], AcceleratorRead);
     for (int jo = 0; jo < Rblock; jo += block) {
-
       nvtxRangePushA("local Inner");
       for (int j = jo; j < MIN(Rblock, jo + block); j++) {
         int jj = j % block;
