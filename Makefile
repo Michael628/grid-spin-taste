@@ -111,3 +111,4 @@ help:
 	@echo "  ./configure --with-grid=PATH        - Specify Grid installation path"
 	@echo "  ./configure --enable-optimization   - Enable compiler optimizations"
 	@echo "  ./configure --enable-debug          - Enable debug symbols"
+	@echo "  ./configure --with-a2a-blocking=N   - Set A2A blocking size (default: 128)"

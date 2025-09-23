@@ -82,6 +82,27 @@ else
     AC_SUBST([DEBUGFLAGS], [""])
 fi
 
+# Add A2A blocking size configuration
+AC_ARG_WITH([a2a-blocking],
+    [AS_HELP_STRING([--with-a2a-blocking=SIZE], [set A2A blocking size (default: 128)])],
+    [a2a_blocking="$withval"],
+    [a2a_blocking="128"])
+
+# Validate that the blocking size is a positive integer
+case "$a2a_blocking" in
+    ''|*[[!0-9]]*)
+        AC_MSG_ERROR([A2A blocking size must be a positive integer, got: $a2a_blocking])
+        ;;
+    *)
+        if test "$a2a_blocking" -le 0; then
+            AC_MSG_ERROR([A2A blocking size must be positive, got: $a2a_blocking])
+        fi
+        ;;
+esac
+
+AC_SUBST([A2A_BLOCKING_FLAGS], ["-DDEV_A2A_BLOCKING=$a2a_blocking"])
+AC_MSG_NOTICE([A2A blocking size set to: $a2a_blocking])
+
 AC_SUBST([GRID_PREFIX], [$grid_prefix])
 AC_OUTPUT
 
@@ -90,5 +111,6 @@ echo "Configuration summary:"
 echo "  Grid installation: $grid_prefix"
 echo "  Optimization:      $optimization"
 echo "  Debug symbols:     $debug"
+echo "  A2A blocking size: $a2a_blocking"
 echo ""
 echo "Now run 'make' to build the project."

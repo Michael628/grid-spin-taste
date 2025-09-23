@@ -28,7 +28,7 @@ directory
 
 // clang-format off
 #include <Grid/Grid.h>
-#include <NewStagA2Autils.h>
+#include <StagA2Autils.h>
 #include <StagGamma.h>
 #include <cuda_profiler_api.h>
 #include <nvtx3/nvToolsExt.h>
@@ -120,8 +120,8 @@ int main(int argc, char *argv[]) {
   start = usecond();
   nvtxRangePushA("Grid utils");
   cudaProfilerStart();
-  NewA2Autils<StaggeredImplR>::MesonField(Mpp, &phi[0], &phi[0], Gmu, phases,
-                                          Tp);
+  StagA2Autils<StaggeredImplR>::MesonField(Mpp, &phi[0], &phi[0], Gmu, phases,
+                                           Tp);
   cudaProfilerStop();
   nvtxRangePop();
   stop = usecond();

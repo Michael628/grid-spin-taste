@@ -11,12 +11,13 @@ config=$(gridinstall)/bin/grid-config
 # Compiler flags (configured by autoconf)
 OPTFLAGS=@OPTFLAGS@
 DEBUGFLAGS=@DEBUGFLAGS@
+A2A_BLOCKING_FLAGS=@A2A_BLOCKING_FLAGS@
 
 INCLUDES := -I../src/cpp # Manually specify include dirs
 #
 #  flags from the grid utility program
 #
-CXXFLAGS= $(shell $(config) --cxxflags) -I$(gridinstall)/include $(OPTFLAGS) $(DEBUGFLAGS)
+CXXFLAGS= $(shell $(config) --cxxflags) -I$(gridinstall)/include $(OPTFLAGS) $(DEBUGFLAGS) $(A2A_BLOCKING_FLAGS)
 LDFLAGS=$(shell $(config) --ldflags)
 LIBS= $(shell $(config) --libs) -L$(gridinstall)/lib -lGrid
 COMPILER=$(shell $(config) --cxx)
@@ -32,14 +33,11 @@ original_stag_gamma: ../src/_original_Test_stag_gamma.cc
 stag_gamma: ../src/Test_stag_gamma.cc
 	$(COMPILER) $(INCLUDES) -o $@ $(CXXFLAGS) ../src/Test_stag_gamma.cc $(LDFLAGS) $(LIBS)
 
-my_meson_field: ../src/Test_my_meson_field.cc
-	$(COMPILER) $(INCLUDES) -o $@ $(GPUFLAGS) $(CXXFLAGS)  ../src/Test_my_meson_field.cc  $(LDFLAGS) $(LIBS) 
+test_blas: ../src/Test_blas.cc
+	$(COMPILER) $(INCLUDES) -o $@ $(GPUFLAGS) $(CXXFLAGS)  ../src/Test_blas.cc  $(LDFLAGS) $(LIBS) 
 
 meson_field: ../src/Test_meson_field.cc
 	$(COMPILER) $(INCLUDES) -o $@ $(GPUFLAGS) $(CXXFLAGS)  ../src/Test_meson_field.cc  $(LDFLAGS) $(LIBS) 
-
-new_meson_field: ../src/Test_new_meson_field.cc
-	$(COMPILER) $(INCLUDES) -o $@ $(GPUFLAGS) $(CXXFLAGS)  ../src/Test_new_meson_field.cc  $(LDFLAGS) $(LIBS) 
 
 # meson_field.o: ../src/Test_meson_field.cc
 # 	$(COMPILER) -O3 $(INCLUDES) -c -o $@ -g -lineinfo $(CXXFLAGS)  ../src/Test_meson_field.cc  $(LDFLAGS) $(LIBS) 
@@ -48,6 +46,6 @@ new_meson_field: ../src/Test_new_meson_field.cc
 # 	nvcc -O3 $(INCLUDES) -o Test_meson_field meson_field.o $(CXXFLAGS)  $(LDFLAGS) $(LIBS) 
 
 clean:
-	rm -f stag_gamma original_stag_gamma meson_field my_meson_field
+	rm -f stag_gamma original_stag_gamma meson_field
 
 .PHONY: clean 

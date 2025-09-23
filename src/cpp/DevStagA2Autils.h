@@ -3,6 +3,7 @@
 #include <Grid/Grid_Eigen_Tensor.h>
 #include <StagGamma.h>
 #include <nvtx3/nvToolsExt.h>
+#include <A2AView.h>
 
 NAMESPACE_BEGIN(Grid);
 
@@ -38,7 +39,7 @@ NAMESPACE_BEGIN(Grid);
 //      expectation value. Otherwise biased.
 ////////////////////////////////////////////////////////////////////
 
-template <typename FImpl> class NewA2Autils {
+template <typename FImpl> class DevA2Autils {
 public:
   typedef typename FImpl::ComplexField ComplexField;
   typedef typename FImpl::FermionField FermionField;
@@ -58,24 +59,20 @@ public:
 
   // output: rank 5 tensor, e.g. Eigen::Tensor<ComplexD, 5>
   template <typename TensorType>
-  static void MesonField(TensorType &mat, const FermionField *lhs_wi,
-                         const FermionField *rhs_vj,
+  static void MesonField(TensorType &mat, std::vector<FermionField> &lhs_wi,
+                         std::vector<FermionField> &rhs_vj,
                          std::vector<StagGamma::SpinTastePair> gammas,
                          const std::vector<ComplexField> &mom, int orthogdim);
-  template <typename TensorType>
-  static void MesonField(TensorType &mat, const FermionField *lhs_wi,
-                         const FermionField *rhs_vj,
-                         std::vector<StagGamma::SpinTastePair> gammas,
-                         const std::vector<ComplexField> &mom, int orthogdim,
-                         double *timer) {
-    MesonField(mat, lhs_wi, rhs_vj, gammas, mom, orthogdim);
-  }
 };
 
-const int newA2Ablocking = 128;
+#ifndef DEV_A2A_BLOCKING
+#define DEV_A2A_BLOCKING 128
+#endif
+
+const int devA2Ablocking = DEV_A2A_BLOCKING;
 
 template <typename vtype>
-using iVecStag = iVector<iScalar<iScalar<vtype>>, newA2Ablocking>;
+using iVecStag = iVector<iScalar<iScalar<vtype>>, devA2Ablocking>;
 typedef iVecStag<Complex> VecStag;
 typedef iVecStag<vComplex> vVecStag;
 typedef Lattice<vVecStag> LatticeVecStag;
@@ -84,12 +81,13 @@ typedef Lattice<vVecStag> LatticeVecStag;
 
 template <class FImpl>
 template <typename TensorType>
-void NewA2Autils<FImpl>::MesonField(
-    TensorType &mat, const FermionField *lhs_wi, const FermionField *rhs_vj,
+void DevA2Autils<FImpl>::MesonField(
+    TensorType &mat, std::vector<FermionField> &lhs_wi,
+    std::vector<FermionField> &rhs_vj,
     std::vector<StagGamma::SpinTastePair> gammas,
     const std::vector<ComplexField> &mom, int orthogdim) {
 
-  const int block = newA2Ablocking;
+  const int block = devA2Ablocking;
   typedef typename FImpl::SiteSpinor vobj;
 
   typedef typename vobj::scalar_object sobj;
@@ -124,60 +122,69 @@ void NewA2Autils<FImpl>::MesonField(
 
   std::cout << GridLogMessage << "A2A Meson Field" << std::endl;
   MomentumProject<LatticeVecStag, ComplexField> MP;
+
+  MemoryManager::Print();
+
+  std::cout << GridLogMessage << "Allocating BLAS arrays" << std::endl;
+  std::cout << GridLogMessage
+            << "scalar size=" << sizeof(LatticeVecStag::scalar_type)
+            << std::endl;
+  auto words = sizeof(LatticeVecStag::scalar_object) /
+               sizeof(LatticeVecStag::scalar_type);
+  std::cout << GridLogMessage << "words=" << words << std::endl;
+  auto ldims = grid->LocalDimensions();
+  auto nt = ldims[grid->Nd() - 1];
+  std::cout << GridLogMessage << "nt=" << nt << std::endl;
+  std::cout << GridLogMessage << "Nmom=" << Nmom << std::endl;
+  auto nxyz = grid->lSites() / nt;
+  std::cout << GridLogMessage << "nxyz=" << nxyz << std::endl;
+
+  std::cout << GridLogMessage << "BLAS_V size=" << (nxyz * nt * words)
+            << std::endl;
+  std::cout << GridLogMessage << "BLAS_M size=" << (Nmom * nxyz) << std::endl;
+  std::cout << GridLogMessage << "BLAS_P size=" << (Nmom * nt * words)
+            << std::endl;
+
   MP.Allocate(Nmom * Ngamma, grid);
+  std::cout << GridLogMessage << "Importing momenta" << std::endl;
   MP.ImportMomenta(momGamma);
   std::cout << GridLogMessage << "Momentum project momenta imported"
             << std::endl;
 
-  double t_view, t_gamma, t_kernel, t_momproj;
-  t_view = 0;
-  t_gamma = 0;
-  t_kernel = 0;
-  t_momproj = 0;
-
+  A2AFieldView<vobj> rhs_view;
   std::vector<VecStag> sliced;
+
   for (int i = 0; i < Lblock; i++) {
-    t_view -= usecond();
     autoView(spinMat_v, spinMat, AcceleratorWrite);
     autoView(lhs_v, lhs_wi[i], AcceleratorRead);
-    t_view += usecond();
     for (int jo = 0; jo < Rblock; jo += block) {
+
+      rhs_view.openViews(&rhs_vj[jo], MIN(Rblock - jo, block));
+      auto rhs_v = rhs_view.getView();
+
       nvtxRangePushA("local Inner");
-      for (int j = jo; j < MIN(Rblock, jo + block); j++) {
-        int jj = j % block;
-        t_view -= usecond();
-        autoView(rhs_v, rhs_vj[j], AcceleratorRead); // Create a vector of views
-        t_view += usecond();
-        //////////////////////////////////////////
-        // Should write a SpinOuterColorTrace
-        //////////////////////////////////////////
-
-        t_kernel -= usecond();
-        accelerator_for(ss, grid->oSites(), (size_t)Nsimd, {
-          auto left = conjugate(lhs_v(ss));
-          auto right = rhs_v(ss);
-          auto vv = spinMat_v(ss);
-          vv(jj)()() = left()()(0) * right()()(0) + left()()(1) * right()()(1) +
-                       left()()(2) * right()()(2);
-          coalescedWrite(spinMat_v[ss], vv);
-        });
-        t_kernel += usecond();
-
-      } // j within block
+      accelerator_for(ss, grid->oSites(), (size_t)Nsimd, {
+        auto left = lhs_v(ss);
+        auto vv = spinMat_v(ss);
+        for (int j = 0; j < MIN(Rblock - jo, block); j++) {
+          auto right = rhs_v[j](ss);
+          vv(j)()() = innerProduct(left, right)()()();
+        }
+        coalescedWrite(spinMat_v[ss], vv);
+      });
       nvtxRangePop();
-      // After getting the sitewise product do the mom phase loop
+
+      rhs_view.closeViews();
 
       assert(orthogdim == Nd - 1);
-      t_momproj -= usecond();
+      nvtxRangePushA("blas offload");
       MP.Project(spinMat, sliced);
-      t_momproj += usecond();
+      nvtxRangePop();
 
-      t_gamma -= usecond();
+      nvtxRangePushA("gamma loop");
       thread_for2d(mmom, Nmom * Ngamma, t, Nt, {
         int m = mmom / Ngamma;
         int mu = mmom % Ngamma;
-        //      for(int m=0;m<Nmom;m++)
-        //	for(int t=0;t<Nt;t++)
         int idx = t + mmom * Nt;
         for (int j = jo; j < MIN(Rblock, jo + block); j++) {
           int jj = j % block;
@@ -185,17 +192,9 @@ void NewA2Autils<FImpl>::MesonField(
           mat((long)m, mu, (long)t, i, j) = tmp()();
         }
       });
-      t_gamma += usecond();
+      nvtxRangePop();
     } // jo
   }
-  std::cout << GridLogMessage << " A2A::MesonField t_view    " << t_view / 1e6
-            << "s" << std::endl;
-  std::cout << GridLogMessage << " A2A::MesonField t_momproj "
-            << t_momproj / 1e6 << "s" << std::endl;
-  std::cout << GridLogMessage << " A2A::MesonField t_kernel  " << t_kernel / 1e6
-            << "s" << std::endl;
-  std::cout << GridLogMessage << " A2A::MesonField t_gamma   " << t_gamma / 1e6
-            << "s" << std::endl;
 }
 
 NAMESPACE_END(Grid);

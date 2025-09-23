@@ -28,7 +28,8 @@ directory
 
 // clang-format off
 #include <Grid/Grid.h>
-#include <StagA2Autils.h>
+#include <ProdStagA2Autils.h>
+#include <DevStagA2Autils.h>
 #include <StagGamma.h>
 #include <cuda_profiler_api.h>
 #include <nvtx3/nvToolsExt.h>
@@ -36,15 +37,27 @@ directory
 
 using namespace Grid;
 
-const int TSRC = 0;   // timeslice where rho is nonzero
-const int VDIM = 128; // length of each vector
-
 typedef typename NaiveStaggeredFermionD::ComplexField ComplexField;
 typedef typename NaiveStaggeredFermionD::FermionField FermionField;
+
+GRID_SERIALIZABLE_ENUM(MFType, undef, prod, 0, dev, 1);
+
+// clang-format off
+class GlobalPar : Serializable {
+public:
+  GRID_SERIALIZABLE_CLASS_MEMBERS(GlobalPar, 
+                                  int, blockSize, 
+                                  MFType, mfType, 
+                                  bool, symmetric, 
+                                  std::string, gammas, 
+                                  std::string, writeFile);
+};
+// clang-format on
 
 int main(int argc, char *argv[]) {
   // initialization
   Grid_init(&argc, &argv);
+  MemoryManager::Print();
   std::cout << GridLogMessage << "Grid initialized" << std::endl;
 
   // Lattice and rng setup
@@ -52,38 +65,42 @@ int main(int argc, char *argv[]) {
   Coordinate simd_layout = GridDefaultSimd(4, vComplex::Nsimd());
   Coordinate mpi_layout = GridDefaultMpi();
   GridCartesian grid(latt_size, simd_layout, mpi_layout);
+
   int Nt = GridDefaultLatt()[Tp];
   Lattice<iScalar<vInteger>> t(&grid);
   LatticeCoordinate(t, Tp);
+
   std::vector<int> seeds({1, 2, 3, 4});
   GridParallelRNG pRNG(&grid);
   pRNG.SeedFixedIntegers(seeds);
 
-  // MesonField lhs and rhs vectors
-  const int Nem = 1;
-  std::vector<FermionField> phi(VDIM, &grid);
-  std::vector<ComplexField> B0(Nem, &grid);
-  std::vector<ComplexField> B1(Nem, &grid);
+  std::string paramFile = argv[1];
+  XmlReader reader(paramFile, false, "grid");
+
+  GlobalPar inputParams;
+  read(reader, "parameters", inputParams);
+
+  std::cout << GridLogMessage << "Allocating vectors" << std::endl;
+  int blockSize = inputParams.blockSize;
+  std::vector<FermionField> phi(blockSize, &grid);
+  std::vector<FermionField> rho(0, &grid);
   std::cout << GridLogMessage << "Initialising random meson fields"
             << std::endl;
-  for (unsigned int i = 0; i < VDIM; ++i) {
+
+  for (unsigned int i = 0; i < blockSize; ++i) {
     random(pRNG, phi[i]);
   }
-  for (unsigned int i = 0; i < Nem; ++i) {
-    random(pRNG, B0[i]);
-    random(pRNG, B1[i]);
+
+  if (!inputParams.symmetric) {
+    rho.resize(blockSize, &grid);
+    for (unsigned int i = 0; i < blockSize; ++i) {
+      random(pRNG, rho[i]);
+    }
   }
-  std::cout << GridLogMessage
-            << "Meson fields initialised, rho non-zero only for t = " << TSRC
-            << std::endl;
 
   // Gamma matrices used in the contraction
-  std::vector<StagGamma::SpinTastePair> Gmu = {
-      {StagGamma::StagAlgebra::G5, StagGamma::StagAlgebra::G5},
-      {StagGamma::StagAlgebra::GX, StagGamma::StagAlgebra::GX},
-      {StagGamma::StagAlgebra::GY, StagGamma::StagAlgebra::GY},
-      {StagGamma::StagAlgebra::GZ, StagGamma::StagAlgebra::GZ},
-      {StagGamma::StagAlgebra::GT, StagGamma::StagAlgebra::GT}};
+  std::vector<StagGamma::SpinTastePair> spinTastes =
+      StagGamma::ParseSpinTaste(inputParams.gammas);
 
   // momentum phases e^{ipx}
   std::vector<std::vector<double>> momenta = {{0., 0., 0.}};
@@ -91,7 +108,7 @@ int main(int argc, char *argv[]) {
   //     {0., 0., 0.}, {1., 0., 0.}, {-1., 0., 0.}, {0, 1., 0.},  {0, -1., 0.},
   //     {0, 0, 1.},   {0, 0, -1.},  {1., 1., 0.},  {1., 1., 1.}, {2., 0., 0.}};
   std::cout << GridLogMessage << "Meson fields will be created for "
-            << Gmu.size() << " Gamma matrices and " << momenta.size()
+            << spinTastes.size() << " Gamma matrices and " << momenta.size()
             << " momenta." << std::endl;
 
   std::cout << GridLogMessage << "Computing complex phases" << std::endl;
@@ -108,8 +125,8 @@ int main(int argc, char *argv[]) {
   }
   std::cout << GridLogMessage << "Computing complex phases done." << std::endl;
 
-  Eigen::Tensor<ComplexD, 5, Eigen::RowMajor> Mpp(momenta.size(), Gmu.size(),
-                                                  Nt, VDIM, VDIM);
+  Eigen::Tensor<ComplexD, 5, Eigen::RowMajor> Mpp(
+      momenta.size(), spinTastes.size(), Nt, blockSize, blockSize);
 
   // timer
   double start, stop;
@@ -117,17 +134,41 @@ int main(int argc, char *argv[]) {
   /////////////////////////////////////////////////////////////////////////
   // execute meson field routine
   /////////////////////////////////////////////////////////////////////////
+  auto worker = A2AWorkerLocal<StaggeredImplR>(&grid, {}, spinTastes, Tp);
+
+  std::cout << GridLogMessage << "Run is "
+            << (inputParams.symmetric ? "symmetric" : "not symmetric")
+            << std::endl;
+
   start = usecond();
   nvtxRangePushA("Grid utils");
   cudaProfilerStart();
-  StagA2Autils<StaggeredImplR>::MesonField(Mpp, &phi[0], &phi[0], Gmu, phases,
-                                           Tp);
+  auto rho_p = &phi[0];
+  if (!inputParams.symmetric) {
+    rho_p = &rho[0];
+  }
+  std::cout << GridLogMessage << "Found: " << inputParams.mfType << std::endl;
+  switch (inputParams.mfType) {
+  case MFType::prod:
+    std::cout << GridLogMessage << "Running Production MesonField" << std::endl;
+    worker.StagMesonField(Mpp, rho_p, nullptr, &phi[0], nullptr);
+    break;
+  case MFType::dev:
+    std::cout << GridLogMessage << "Running Development MesonField"
+              << std::endl;
+    DevA2Autils<StaggeredImplR>::MesonField(Mpp, phi, phi, spinTastes, phases,
+                                            Tp);
+    break;
+  default:
+    std::cout << GridLogMessage << "Unknown MFType" << std::endl;
+    break;
+  }
   cudaProfilerStop();
   nvtxRangePop();
   stop = usecond();
-  std::cout << GridLogMessage << "M(phi,phi) created, execution time "
+  std::cout << GridLogMessage << "M(rho,phi) created, execution time "
             << stop - start << " us" << std::endl;
-  std::string FileName = "Meson_Fields";
+  std::string FileName = inputParams.writeFile;
 #ifdef HAVE_HDF5
   using Default_Reader = Grid::Hdf5Reader;
   using Default_Writer = Grid::Hdf5Writer;

@@ -2,6 +2,8 @@
 
 #include <Grid/Grid_Eigen_Tensor.h>
 #include <StagGamma.h>
+#include <nvtx3/nvToolsExt.h>
+#include <A2AView.h>
 
 #ifndef MF_SUM_ARRAY_MAX
 #define MF_SUM_ARRAY_MAX 16
@@ -63,58 +65,6 @@ NAMESPACE_BEGIN(Grid);
   Integer *ocoor_p = this->_o_coor_map_device;                                 \
   bool cbEven = this->_cb_left == Even;                                        \
   bool oddShifts = this->_odd_shifts;
-
-template <typename Vtype, typename obj> class A2AViewBase {
-public:
-  std::vector<Vtype> _view;
-  Vtype *_view_device;
-  size_t _view_device_size;
-
-public:
-  A2AViewBase() = default;
-
-  Vtype &operator[](size_t i) { return _view[i]; }
-
-  int size() { return _view.size(); }
-
-  void reserve(int size) {
-    _view.reserve(size);
-    _view_device_size = size * sizeof(Vtype);
-    _view_device = (Vtype *)acceleratorAllocDevice(_view_device_size);
-  }
-
-  Vtype *getView() { return _view_device; }
-
-  virtual void copyToDevice() {
-    acceleratorCopyToDevice(_view.data(), _view_device, _view_device_size);
-  }
-
-  virtual void closeViews() {
-    for (int p = 0; p < this->_view.size(); p++)
-      this->_view[p].ViewClose();
-
-    _view.erase(this->_view.begin(), this->_view.end());
-
-    if (this->_view_device_size > 0) {
-      acceleratorFreeDevice(this->_view_device);
-      this->_view_device_size = 0;
-    }
-  }
-
-  virtual ~A2AViewBase() { this->closeViews(); }
-};
-
-template <typename obj>
-class A2AFieldView : public A2AViewBase<LatticeView<obj>, obj> {
-public:
-  void openViews(const Lattice<obj> *fields, int size) {
-    this->reserve(size);
-    for (int i = 0; i < size; i++) {
-      this->_view.push_back(fields[i].View(AcceleratorRead));
-    }
-    this->copyToDevice();
-  }
-};
 
 template <typename FImpl> class A2ATaskBase {
 public:
@@ -338,13 +288,17 @@ public:
 
       int nGammaBlock = std::min(nGamma - mu, MF_SUM_ARRAY_MAX);
 
+      nvtxRangePushA("vectorSum");
       vectorSum(shm_p + mu * gammaStride, mu, nGammaBlock);
+      nvtxRangePop();
     }
 
+    nvtxRangePushA("simdSum");
     for (int mu = 0; mu < nGamma; mu++) {
       simdSum(result_p + mu * multFact * sizeR * sizeL * Nt,
               shm_p + mu * gammaStride);
     }
+    nvtxRangePop();
 
     acceleratorFreeDevice(shm_p);
   }
@@ -808,6 +762,7 @@ public:
     // scalar_type *matDevice = _cache_device;
     scalar_type *matDevice = mat.data();
 
+    nvtxRangePushA("setLeft");
     if (_l_addr != lhs_wi_E) {
       _l_addr = lhs_wi_E;
 
@@ -817,7 +772,9 @@ public:
       else if (checkerR)
         _task_o->setLeft(*_task_e);
     }
+    nvtxRangePop();
 
+    nvtxRangePushA("setRight");
     if (_r_addr != rhs_vj_E) {
       _r_addr = rhs_vj_E;
 
@@ -836,6 +793,7 @@ public:
         }
       }
     }
+    nvtxRangePop();
 
     _t_kernel = -usecond();
     if (!(checkerL || checkerR)) {
