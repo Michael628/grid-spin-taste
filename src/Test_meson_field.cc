@@ -30,6 +30,7 @@ directory
 #include <Grid/Grid.h>
 #include <ProdStagA2Autils.h>
 #include <DevStagA2Autils.h>
+#include <DevStagA2AutilsCached.h>
 #include <StagGamma.h>
 #include <cuda_profiler_api.h>
 #include <nvtx3/nvToolsExt.h>
@@ -40,7 +41,7 @@ using namespace Grid;
 typedef typename NaiveStaggeredFermionD::ComplexField ComplexField;
 typedef typename NaiveStaggeredFermionD::FermionField FermionField;
 
-GRID_SERIALIZABLE_ENUM(MFType, undef, prod, 0, dev, 1);
+GRID_SERIALIZABLE_ENUM(MFType, undef, prod, 0, dev, 1, cached, 2);
 
 // clang-format off
 class GlobalPar : Serializable {
@@ -158,6 +159,12 @@ int main(int argc, char *argv[]) {
               << std::endl;
     DevA2Autils<StaggeredImplR>::MesonField(Mpp, phi, phi, spinTastes, phases,
                                             Tp);
+    break;
+  case MFType::cached:
+    std::cout << GridLogMessage << "Running Development MesonField"
+              << std::endl;
+    DevA2AutilsCached<StaggeredImplR>::MesonField(Mpp, phi, phi, spinTastes,
+                                                  phases, Tp);
     break;
   default:
     std::cout << GridLogMessage << "Unknown MFType" << std::endl;

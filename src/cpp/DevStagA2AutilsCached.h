@@ -2,9 +2,10 @@
 // #include <Grid/Hadrons/Global.hpp>
 #include <A2AView.h>
 #include <Grid/Grid_Eigen_Tensor.h>
-#include <MomentumProject.h>
+#include <SpatialTrace.h>
 #include <StagGamma.h>
 #include <nvtx3/nvToolsExt.h>
+#include <typeinfo>
 
 NAMESPACE_BEGIN(Grid);
 
@@ -40,7 +41,9 @@ NAMESPACE_BEGIN(Grid);
 //      expectation value. Otherwise biased.
 ////////////////////////////////////////////////////////////////////
 
-template <typename FImpl> class DevA2Autils {
+template <typename... Ts> struct print_types;
+
+template <typename FImpl> class DevA2AutilsCached {
 public:
   typedef typename FImpl::ComplexField ComplexField;
   typedef typename FImpl::FermionField FermionField;
@@ -70,7 +73,7 @@ public:
 #define DEV_A2A_BLOCKING 128
 #endif
 
-const int devA2Ablocking = DEV_A2A_BLOCKING;
+extern const int devA2Ablocking;
 
 template <typename vtype>
 using iVecStag = iVector<iScalar<iScalar<vtype>>, devA2Ablocking>;
@@ -82,7 +85,7 @@ typedef Lattice<vVecStag> LatticeVecStag;
 
 template <class FImpl>
 template <typename TensorType>
-void DevA2Autils<FImpl>::MesonField(
+void DevA2AutilsCached<FImpl>::MesonField(
     TensorType &mat, std::vector<FermionField> &lhs_wi,
     std::vector<FermionField> &rhs_vj,
     std::vector<StagGamma::SpinTastePair> gammas,
@@ -107,7 +110,6 @@ void DevA2Autils<FImpl>::MesonField(
   int Ngamma = gammas.size();
   int Nmom = mom.size();
 
-  LatticeVecStag spinMat(grid);
   std::vector<ComplexField> momGamma(Nmom * Ngamma, grid);
   StagGamma spinTaste;
 
@@ -154,24 +156,32 @@ void DevA2Autils<FImpl>::MesonField(
 
   A2AFieldView<vobj> rhs_view;
   std::vector<VecStag> sliced;
+  auto blas_vp = MP.getBlasVectorPointer();
+  auto imap_p = MP.getImapPointer();
+  auto omap_p = MP.getOmapPointer();
+
+  // print_types<vobj, vector_type, scalar_type> dummy;
 
   for (int i = 0; i < Lblock; i++) {
-    autoView(spinMat_v, spinMat, AcceleratorWrite);
     autoView(lhs_v, lhs_wi[i], AcceleratorRead);
     for (int jo = 0; jo < Rblock; jo += block) {
 
       rhs_view.openViews(&rhs_vj[jo], MIN(Rblock - jo, block));
       auto rhs_v = rhs_view.getView();
+      size_t nwords = MIN(Rblock - jo, block);
 
       nvtxRangePushA("local Inner");
-      accelerator_for(ss, grid->oSites(), (size_t)Nsimd, {
+      accelerator_for2d(ls, grid->lSites(), word, nwords, 1, {
+        auto idx = ls * block + word;
+        auto ss = omap_p[ls];
+        auto lane = imap_p[ls];
+
         auto left = lhs_v(ss);
-        auto vv = spinMat_v(ss);
-        for (int j = 0; j < MIN(Rblock - jo, block); j++) {
-          auto right = rhs_v[j](ss);
-          vv(j)()() = innerProduct(left, right)()()();
-        }
-        coalescedWrite(spinMat_v[ss], vv);
+        auto right = rhs_v[word](ss);
+        Scalar_v vv;
+
+        vv = innerProduct(left, right);
+        blas_vp[idx] = extractLane(lane, vv);
       });
       nvtxRangePop();
 
@@ -179,7 +189,7 @@ void DevA2Autils<FImpl>::MesonField(
 
       assert(orthogdim == Nd - 1);
       nvtxRangePushA("blas offload");
-      MP.Project(spinMat, sliced);
+      MP.Project(sliced);
       nvtxRangePop();
 
       nvtxRangePushA("gamma loop");
