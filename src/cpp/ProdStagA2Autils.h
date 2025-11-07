@@ -1,9 +1,9 @@
 #pragma once
 
+#include <A2AView.h>
 #include <Grid/Grid_Eigen_Tensor.h>
 #include <StagGamma.h>
 #include <nvtx3/nvToolsExt.h>
-#include <A2AView.h>
 
 #ifndef MF_SUM_ARRAY_MAX
 #define MF_SUM_ARRAY_MAX 16
@@ -795,6 +795,8 @@ public:
     }
     nvtxRangePop();
 
+    nvtxRangePushA("Sum: Total");
+    nvtxRangePushA("Sum: Kernel");
     _t_kernel = -usecond();
     if (!(checkerL || checkerR)) {
       _task_e->execute(matDevice);
@@ -802,6 +804,7 @@ public:
       _task_e->execute(matDevice);
       _task_o->execute(matDevice);
     }
+    nvtxRangePop();
 
     setFlops(_task_e->getFlops());
     _t_kernel += usecond();
@@ -813,6 +816,7 @@ public:
     // size_t matBytes = mat.size()*sizeof(scalar_type);
     // acceleratorCopyFromDevice(matDevice,matHost,matBytes);
 
+    nvtxRangePushA("Sum: Global");
     _t_gsum = -usecond();
     int comm_batch = std::pow(2, 20);
     int offset = 0;
@@ -820,6 +824,8 @@ public:
 
     this->_grid->GlobalSumVector(matDevice, nGamma * resultStride);
     _t_gsum += usecond();
+    nvtxRangePop();
+    nvtxRangePop();
   }
   void setFlops(double flops) { _flops = flops; }
   double getFlops() { return _flops; }

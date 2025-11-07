@@ -1,8 +1,8 @@
 /*************************************************************************************
 
-    Grid physics lileftry, www.github.com/paboyle/Grid
+    Grid physics library, www.github.com/paboyle/Grid
 
-    Source file: MomentumProject.h
+    Source file: SpatialTrace.h
 
     Copyright (C) 2025
 
@@ -31,29 +31,28 @@ directory
 
 NAMESPACE_BEGIN(Grid);
 /*
-   MultiMomProject
+   SpatialTrace
 
-   Import vectors -> nxyz x (ncomponent x nt)
-   Import complex phases -> nmom x nxy
+   Import left fields  -> nt x nxyz x (nleft x leftWords)
+   Import right fields -> nt x nxyz x (nright x rightWords)
 
-   apply = via (possibly batched) GEMM
+   Compute spatial trace via batched GEMM, one batch per time slice:
+   For each time t: Trace[t] = sum_xyz Left[t,xyz]^dag * Right[t,xyz]
 */
-template <class LeftField, class RightField, class ResultField>
+template <class LeftField, class RightField, typename result_object>
 class SpatialTrace {
 public:
   typedef typename RightField::scalar_type scalar;
-  // typedef typename RightField::scalar_type right_scalar;
-  // typedef typename LeftField::scalar_type left_scalar;
-  // typedef typename ResultField::scalar_type result_scalar;
   typedef typename RightField::scalar_object right_scalar_object;
   typedef typename LeftField::scalar_object left_scalar_object;
-  typedef typename ResultField::scalar_object result_scalar_object;
 
   GridBase *grid;
   uint64_t nxyz;
   uint64_t nt;
+  uint64_t lsites;
   uint64_t nright;
   uint64_t nleft;
+  uint64_t nresults;
   uint64_t rightWords;
   uint64_t leftWords;
   uint64_t resultWords;
@@ -64,8 +63,8 @@ public:
   deviceVector<Integer> OMAP;
   deviceVector<Integer> IMAP;
 
-  SpacialTrace() {};
-  ~SpacialTrace() { Deallocate(); };
+  SpatialTrace() {};
+  ~SpatialTrace() { Deallocate(); };
 
   void Deallocate(void) {
     grid = nullptr;
@@ -77,6 +76,7 @@ public:
     rightWords = 0;
     leftWords = 0;
     resultWords = 0;
+    nresults = 0;
     BLAS_L.resize(0);
     BLAS_R.resize(0);
     BLAS_T.resize(0);
@@ -95,18 +95,20 @@ public:
     nright = _nright;
     leftWords = sizeof(left_scalar_object) / sizeof(scalar);
     rightWords = sizeof(right_scalar_object) / sizeof(scalar);
-    resultWords = sizeof(result_scalar_object) / sizeof(scalar);
+    resultWords = sizeof(result_object) / sizeof(scalar);
+    nresults = nleft * leftWords * nright * rightWords / resultWords;
 
-    GRID_ASSERT(nleft * leftWords * nright * rightWords == resultWords);
-
-    BLAS_L.resize(nxyz * nt * nleft * leftWords);
-    BLAS_R.resize(nxyz * nt * nright * rightWords);
-    BLAS_T.resize(nt * resultWords);
+    GRID_ASSERT(nleft * leftWords * nright * rightWords ==
+                nresults * resultWords);
+    // Layout: BLAS_L[nt][nxyz][nleft * leftWords]
+    BLAS_L.resize(nt * nxyz * nleft * leftWords);
+    // Layout: BLAS_R[nt][nxyz][nright * rightWords]
+    BLAS_R.resize(nt * nxyz * nright * rightWords);
+    // Layout: BLAS_T[nt][resultWords]
+    BLAS_T.resize(nt * nresults * resultWords);
   }
 
-  void ImportLeft(const std::vector<LeftField> &left,
-                  bool do_conjugate = true) {
-    //    might as well just make the momenta here
+  void ImportLeft(const std::vector<LeftField> &left) {
     typedef typename LeftField::vector_object vobj;
 
     int nd = grid->_ndimension;
@@ -115,121 +117,136 @@ public:
 
     GRID_ASSERT(left[0].Grid() == grid);
     GRID_ASSERT(nleft >= left.size());
-    GRID_ASSERT(sz >= nxyz * nt * left.size(nleft) * leftWords);
+    GRID_ASSERT(sz >= nt * nxyz * left.size() * leftWords);
 
     Coordinate rdimensions = grid->_rdimensions;
     Coordinate ldims = grid->LocalDimensions();
-    int64_t lsites = grid->lSites();
-    int64_t nwords = leftWords * nleft;
     Coordinate simd = grid->_simd_layout;
     const int Nsimd = vobj::Nsimd();
     auto blasData_l = &BLAS_L[0];
+
+    int64_t Nt = nt;               // for capture
+    int64_t Nxyz = nxyz;           // for capture
+    int64_t Nleft = nleft;         // for capture
+    int64_t LeftWords = leftWords; // for capture
 
     for (int li = 0; li < left.size(); li++) {
 
       autoView(left_v, left[li], AcceleratorRead);
       auto left_p = &left_v[0];
 
-      accelerator_for(ls, lsites, 1, {
-        //////////////////////////////////////////
-        // isite -- map lane within buffer to lane within lattice
-        ////////////////////////////////////////////
-        Coordinate lcoor(nd, 0);
-        Lexicographic::CoorFromIndex(lcoor, ls, ldims);
+      accelerator_for(sf, grid->oSites(), Nsimd, {
+#ifdef GRID_SIMT
+        {
+          int lane = acceleratorSIMTlane(Nsimd); // buffer lane
+#else
+	  for(int lane=0;lane<Nsimd;lane++) {
+#endif
+          //////////////////////////////////////////
+          // Map lane within buffer to lane within lattice
+          ////////////////////////////////////////////
+          Coordinate lcoor(nd, 0);
+          Coordinate icoor(nd);
+          Coordinate ocoor(nd);
 
-        Coordinate icoor(nd);
-        Coordinate ocoor(nd);
-        for (int d = 0; d < nd; d++) {
-          icoor[d] = lcoor[d] / rdimensions[d];
-          ocoor[d] = lcoor[d] % rdimensions[d];
-        }
+          Lexicographic::CoorFromIndex(icoor, lane, simd);
+          Lexicographic::CoorFromIndex(ocoor, sf, rdimensions);
 
-        uint64_t l_t = lcoor[nd - 1];
+          for (int d = 0; d < nd; d++) {
+            lcoor[d] = rdimensions[d] * icoor[d] + ocoor[d];
+          }
+          uint64_t l_t = lcoor[nd - 1];
 
-        int64_t l_xyz = 0;
-        Coordinate xyz_coor = lcoor;
-        xyz_coor[nd - 1] = 0;
-        Lexicographic::IndexFromCoor(xyz_coor, l_xyz, ldims);
+          Coordinate xyz_coor = lcoor;
+          xyz_coor[nd - 1] = 0;
+          int64_t l_xyz = 0;
+          Lexicographic::IndexFromCoor(xyz_coor, l_xyz, ldims);
 
-        int64_t osite;
-        int64_t isite;
-        Lexicographic::IndexFromCoor(ocoor, osite, rdimensions);
-        Lexicographic::IndexFromCoor(icoor, isite, simd);
+          left_scalar_object data = extractLane(lane, left_p[sf]);
+          scalar *data_words = (scalar *)&data;
 
-        // BLAS_L[nmom][slice_vol]
-        // Fortran Column major BLAS layout is L_xyz,(t,w)
-        scalar data = extractLane(isite, left_p[osite]);
-        scalar *data_words = (scalar *)&data;
-        for (int w = 0; w < nwords; w++) {
-          // BLAS_R[slice_vol][nt][words]
-          // Fortran Column major BLAS layout is V_(t,w)_xyz
-          uint64_t idx = w + l_t * nwords + l_xyz * nwords * Nt;
-          blasData_l[idx] = data;
-          blasData_p[idx] = data_words[w];
+          // Layout: BLAS_L[t][xyz][li * leftWords + w]
+          // Index: w + li*leftWords + xyz*nleft*leftWords +
+          // t*nxyz*nleft*leftWords
+          for (int w = 0; w < LeftWords; w++) {
+            uint64_t idx = w + li * LeftWords + l_xyz * Nleft * LeftWords +
+                           l_t * Nxyz * Nleft * LeftWords;
+            blasData_l[idx] = data_words[w];
+          }
         }
       });
     }
   }
 
-  void ImportRight(RightField &vec) {
+  void ImportRight(const std::vector<RightField> &right) {
     typedef typename RightField::vector_object vobj;
 
     int nd = grid->_ndimension;
 
     uint64_t sz = BLAS_R.size();
 
-    GRID_ASSERT(sz = nxyz * words * nt);
+    GRID_ASSERT(right[0].Grid() == grid);
+    GRID_ASSERT(nright >= right.size());
+    GRID_ASSERT(sz >= nt * nxyz * right.size() * rightWords);
 
     Coordinate rdimensions = grid->_rdimensions;
     Coordinate ldims = grid->LocalDimensions();
-    int64_t osites = grid->oSites();
     Coordinate simd = grid->_simd_layout;
     const int Nsimd = vobj::Nsimd();
 
-    auto blasData_p = &BLAS_R[0];
-    autoView(Data, vec, AcceleratorRead);
-    auto Data_p = &Data[0];
+    auto blasData_r = &BLAS_R[0];
 
-    int64_t nwords = words; // for capture
-    int64_t Nt = nt;        // for capture
+    int64_t Nt = nt;                 // for capture
+    int64_t Nxyz = nxyz;             // for capture
+    int64_t Nright = nright;         // for capture
+    int64_t RightWords = rightWords; // for capture
 
-    accelerator_for(sf, osites, Nsimd, {
+    for (int ri = 0; ri < right.size(); ri++) {
+
+      autoView(right_v, right[ri], AcceleratorRead);
+      auto right_p = &right_v[0];
+
+      accelerator_for(sf, grid->oSites(), Nsimd, {
 #ifdef GRID_SIMT
-      {
-        int lane = acceleratorSIMTlane(Nsimd); // buffer lane
+        {
+          int lane = acceleratorSIMTlane(Nsimd); // buffer lane
 #else
 	  for(int lane=0;lane<Nsimd;lane++) {
 #endif
-        //////////////////////////////////////////
-        // isite -- map lane within buffer to lane within lattice
-        ////////////////////////////////////////////
-        Coordinate lcoor(nd, 0);
-        Coordinate icoor(nd);
-        Coordinate ocoor(nd);
+          //////////////////////////////////////////
+          // Map lane within buffer to lane within lattice
+          ////////////////////////////////////////////
+          Coordinate lcoor(nd, 0);
+          Coordinate icoor(nd);
+          Coordinate ocoor(nd);
 
-        Lexicographic::CoorFromIndex(icoor, lane, simd);
-        Lexicographic::CoorFromIndex(ocoor, sf, rdimensions);
+          Lexicographic::CoorFromIndex(icoor, lane, simd);
+          Lexicographic::CoorFromIndex(ocoor, sf, rdimensions);
 
-        int64_t l_xyz = 0;
-        for (int d = 0; d < nd; d++) {
-          lcoor[d] = rdimensions[d] * icoor[d] + ocoor[d];
+          for (int d = 0; d < nd; d++) {
+            lcoor[d] = rdimensions[d] * icoor[d] + ocoor[d];
+          }
+          uint64_t l_t = lcoor[nd - 1];
+
+          Coordinate xyz_coor = lcoor;
+          xyz_coor[nd - 1] = 0;
+          int64_t l_xyz = 0;
+          Lexicographic::IndexFromCoor(xyz_coor, l_xyz, ldims);
+
+          right_scalar_object data = extractLane(lane, right_p[sf]);
+          scalar *data_words = (scalar *)&data;
+
+          // Layout: BLAS_R[t][xyz][ri * rightWords + w]
+          // Index: w + ri*rightWords + xyz*nright*rightWords +
+          // t*nxyz*nright*rightWords
+          for (int w = 0; w < RightWords; w++) {
+            uint64_t idx = w + ri * RightWords + l_xyz * Nright * RightWords +
+                           l_t * Nxyz * Nright * RightWords;
+            blasData_r[idx] = data_words[w];
+          }
         }
-        uint64_t l_t = lcoor[nd - 1];
-
-        Coordinate xyz_coor = lcoor;
-        xyz_coor[nd - 1] = 0;
-        Lexicographic::IndexFromCoor(xyz_coor, l_xyz, ldims);
-
-        scalar_object data = extractLane(lane, Data[sf]);
-        scalar *data_words = (scalar *)&data;
-        for (int w = 0; w < nwords; w++) {
-          // BLAS_R[slice_vol][nt][words]
-          // Fortran Column major BLAS layout is V_(t,w)_xyz
-          uint64_t idx = w + l_t * nwords + l_xyz * nwords * Nt;
-          blasData_p[idx] = data_words[w];
-        }
-      }
-    });
+      });
+    }
   }
 
   scalar *getBlasRightPointer() {
@@ -257,7 +274,7 @@ public:
   }
 
   void buildIndexMap(bool inner) {
-    /* Builds mapping from BLAS_R indices (in blocks of `words`) to inner (if
+    /* Builds mapping from BLAS indices (in blocks of `words`) to inner (if
      * `inner` == true) or outer (if `inner` == false) Grid indices. Mapping is
      * stored in `IMAP` and `OMAP`, respectively.
      */
@@ -265,7 +282,6 @@ public:
 
     Coordinate rdimensions = grid->_rdimensions;
     Coordinate ldims = grid->LocalDimensions();
-    int64_t lsites = grid->lSites();
     Coordinate simd = grid->_simd_layout;
     const int Nsimd = grid->Nsimd();
 
@@ -304,7 +320,7 @@ public:
       xyz_coor[nd - 1] = 0;
       Lexicographic::IndexFromCoor(xyz_coor, l_xyz, ldims);
 
-      uint64_t idx = l_t + l_xyz * Nt;
+      uint64_t idx = l_t * nxyz + l_xyz;
       if (inner_map) {
         map_p[idx] = lane;
       } else {
@@ -313,65 +329,88 @@ public:
     });
   }
 
-  void ExportTrace(std::vector<typename ResultField::scalar_object> &trace) {
-    trace.resize(resultWords * nt);
+  void ExportTrace(std::vector<result_object> &trace) {
+    trace.resize(nt * nresults);
+
+    // Copy directly to trace (will be in wrong order initially)
     acceleratorCopyFromDevice(&BLAS_T[0], (scalar *)&trace[0],
                               BLAS_T.size() * sizeof(scalar));
-    // Could decide on a layout late?
+
+    std::vector<scalar> temp_result(nresults * resultWords);
+    // Now transpose each result in-place
+    for (int t = 0; t < nt; t++) {
+      scalar *data = (scalar *)&trace[t * nresults];
+
+      int M = nleft * leftWords;
+      int N = nright * rightWords;
+
+      // Transpose M×N matrix in-place
+      // For small matrices, use a temporary
+      for (int i = 0; i < M; i++) {
+        for (int j = 0; j < N; j++) {
+          // Column-major input at j*M + i becomes row-major at i*N + j
+          temp_result[i * N + j] = data[j * M + i];
+        }
+      }
+      // Copy back
+      for (int k = 0; k < nresults * resultWords; k++) {
+        data[k] = temp_result[k];
+      }
+    }
   }
 
-  // Row major layout "C" order:
-  // BLAS_R[slice_vol][nt][words]
-  // BLAS_L[nmom][slice_vol]
-  // BLAS_T[nmom][nt][words]
-  //
-  // Fortran Column major BLAS layout is V_(w,t)_xyz
-  // Fortran Column major BLAS layout is M_xyz,mom
-  // Fortran Column major BLAS layout is P_(w,t),mom
-  //
-  // Projected
-  //
-  // P = (V * M)_(w,t),mom
-  //
-
-  void Project(std::vector<typename ResultField::scalar_object> &trace_gdata) {
+  void Trace(std::vector<result_object> &trace_gdata) {
     double t_import = 0;
     double t_export = 0;
     double t_gemm = 0;
     double t_allreduce = 0;
+    nvtxRangePushA("Import");
     t_import -= usecond();
 
-    std::vector<typename ResultField::scalar_object> projected_planes;
+    std::vector<result_object> trace_planes;
 
-    deviceVector<scalar *> Rd(1);
-    deviceVector<scalar *> Ld(1);
-    deviceVector<scalar *> Td(1);
+    // Setup batched GEMM pointers - one batch per time slice
+    deviceVector<scalar *> Ld(nt);
+    deviceVector<scalar *> Rd(nt);
+    deviceVector<scalar *> Td(nt);
 
-    scalar *Rh = &BLAS_R[0];
     scalar *Lh = &BLAS_L[0];
+    scalar *Rh = &BLAS_R[0];
     scalar *Th = &BLAS_T[0];
 
-    acceleratorPut(Rd[0], Rh);
-    acceleratorPut(Ld[0], Lh);
-    acceleratorPut(Td[0], Th);
+    // Each batch points to a different time slice
+    for (int t = 0; t < nt; t++) {
+      acceleratorPut(Ld[t], Lh + t * nxyz * nleft * leftWords);
+      acceleratorPut(Rd[t], Rh + t * nxyz * nright * rightWords);
+      acceleratorPut(Td[t], Th + t * nresults * resultWords);
+    }
     t_import += usecond();
+    nvtxRangePop();
 
     GridBLAS BLAS;
 
     /////////////////////////////////////////
-    // T_im = Lmx . Rxi
+    // For each time t: T[t] = L[t] * R[t]
+    // Sum over spatial xyz dimension
     /////////////////////////////////////////
+    nvtxRangePushA("GEMM");
     t_gemm -= usecond();
-    BLAS.gemmBatched(GridBLAS_OP_N, GridBLAS_OP_N, resultWords * nt,
-                     nleft * leftWords, lsites, scalar(1.0), Vd, Md,
-                     scalar(0.0), // wipe out result
-                     Pd);
+    BLAS.gemmBatched(GridBLAS_OP_N, GridBLAS_OP_N,
+                     nleft * leftWords,   // M (rows of L)
+                     nright * rightWords, // N (cols of R)
+                     nxyz,                // K (sum over spatial)
+                     scalar(1.0), Ld, Rd,
+                     scalar(0.0), // don't accumulate result
+                     Td);
     BLAS.synchronise();
     t_gemm += usecond();
+    nvtxRangePop();
 
+    nvtxRangePushA("Export Trace");
     t_export -= usecond();
-    ExportMomentumProjection(projected_planes); // resizes
+    ExportTrace(trace_planes);
     t_export += usecond();
+    nvtxRangePop();
 
     /////////////////////////////////
     // Reduce across MPI ranks
@@ -379,35 +418,44 @@ public:
     int nd = grid->Nd();
     int gt = grid->GlobalDimensions()[nd - 1];
     int lt = grid->LocalDimensions()[nd - 1];
-    trace_gdata.resize(gt * nmom);
-    for (int t = 0; t < gt * nmom;
-         t++) { // global Nt array with zeroes for stuff not on this node
+    trace_gdata.resize(gt * nresults);
+
+    // Initialize with zeros
+    for (int t = 0; t < gt * nresults; t++) {
       trace_gdata[t] = Zero();
     }
+
+    // Fill in local time slices
     for (int t = 0; t < lt; t++) {
-      for (int m = 0; m < nmom; m++) {
-        int st = grid->LocalStarts()[nd - 1];
-        trace_gdata[t + st + gt * m] = projected_planes[t + lt * m];
+      int st = grid->LocalStarts()[nd - 1];
+      for (int r = 0; r < nresults; r++) {
+        trace_gdata[(t + st) * nresults + r] = trace_planes[t * nresults + r];
       }
     }
-    t_allreduce -= usecond();
-    grid->GlobalSumVector((scalar *)&projected_gdata[0], gt * nmom * words);
-    t_allreduce += usecond();
 
-    std::cout << GridLogPerformance << " MomentumProject t_import  " << t_import
+    nvtxRangePushA("Global Sum");
+    t_allreduce -= usecond();
+    grid->GlobalSumVector((scalar *)&trace_gdata[0],
+                          gt * nresults * resultWords);
+    t_allreduce += usecond();
+    nvtxRangePop();
+
+    std::cout << GridLogPerformance << " SpatialTrace t_import  " << t_import
               << "us" << std::endl;
-    std::cout << GridLogPerformance << " MomentumProject t_export  " << t_export
+    std::cout << GridLogPerformance << " SpatialTrace t_export  " << t_export
               << "us" << std::endl;
-    std::cout << GridLogPerformance << " MomentumProject t_gemm    " << t_gemm
+    std::cout << GridLogPerformance << " SpatialTrace t_gemm    " << t_gemm
               << "us" << std::endl;
-    std::cout << GridLogPerformance << " MomentumProject t_reduce  "
-              << t_allreduce << "us" << std::endl;
+    std::cout << GridLogPerformance << " SpatialTrace t_reduce  " << t_allreduce
+              << "us" << std::endl;
   }
-  void
-  Project(LeftField &data,
-          std::vector<typename LeftField::scalar_object> &projected_gdata) {
-    this->ImportVector(data);
-    Project(projected_gdata);
+
+  void Trace(const std::vector<LeftField> &left,
+             const std::vector<RightField> &right,
+             std::vector<result_object> &trace_gdata) {
+    this->ImportLeft(left);
+    this->ImportRight(right);
+    Trace(trace_gdata);
   }
 };
 

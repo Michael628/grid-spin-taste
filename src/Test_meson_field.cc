@@ -32,7 +32,7 @@ directory
 #include <DevStagA2Autils.h>
 #include <DevStagA2AutilsCached.h>
 #include <StagGamma.h>
-#include <cuda_profiler_api.h>
+// #include <cuda_profiler_api.h>
 #include <nvtx3/nvToolsExt.h>
 // clang-format on
 
@@ -42,6 +42,7 @@ typedef typename NaiveStaggeredFermionD::ComplexField ComplexField;
 typedef typename NaiveStaggeredFermionD::FermionField FermionField;
 
 GRID_SERIALIZABLE_ENUM(MFType, undef, prod, 0, dev, 1, cached, 2);
+GRID_SERIALIZABLE_ENUM(SourceType, undef, random, 0, point, 1);
 
 // clang-format off
 class GlobalPar : Serializable {
@@ -49,7 +50,10 @@ public:
   GRID_SERIALIZABLE_CLASS_MEMBERS(GlobalPar, 
                                   int, blockSize, 
                                   MFType, mfType, 
-                                  bool, symmetric, 
+                                  bool, symmetric,
+                                  SourceType, sourceType,
+                                  std::vector<int>, phiSource,  // [x,y,z,t] for lhs point source
+                                  std::vector<int>, rhoSource,  // [x,y,z,t] for rhs point source
                                   std::string, gammas, 
                                   std::string, writeFile);
 };
@@ -85,17 +89,64 @@ int main(int argc, char *argv[]) {
   int blockSize = inputParams.blockSize;
   std::vector<FermionField> phi(blockSize, &grid);
   std::vector<FermionField> rho(0, &grid);
-  std::cout << GridLogMessage << "Initialising random meson fields"
-            << std::endl;
 
-  for (unsigned int i = 0; i < blockSize; ++i) {
-    random(pRNG, phi[i]);
+  // Check if sourceType is set, default to random if not specified
+  SourceType sourceType = SourceType::random;
+  if (inputParams.sourceType != SourceType::undef) {
+    sourceType = inputParams.sourceType;
   }
 
-  if (!inputParams.symmetric) {
-    rho.resize(blockSize, &grid);
+  if (sourceType == SourceType::point) {
+    // Default to origin if not specified
+    Coordinate phiLoc = (inputParams.phiSource.size() == 4)
+                            ? Coordinate(inputParams.phiSource)
+                            : Coordinate(4, 0);
+    Coordinate rhoLoc = (inputParams.rhoSource.size() == 4)
+                            ? Coordinate(inputParams.rhoSource)
+                            : Coordinate(4, 0);
+
+    std::cout << GridLogMessage << "Initialising point source fields"
+              << std::endl;
+    std::cout << GridLogMessage << "  phi source at: (" << phiLoc[0] << ","
+              << phiLoc[1] << "," << phiLoc[2] << "," << phiLoc[3] << ")"
+              << std::endl;
+
+    // Create point source for phi vectors
     for (unsigned int i = 0; i < blockSize; ++i) {
-      random(pRNG, rho[i]);
+      phi[i] = Zero();
+
+      // Create point source: set value to 1.0 at specified location, zero
+      // elsewhere We set it for all color/spin components
+      typename FermionField::scalar_object one_src;
+      one_src = 1.0;
+      pokeSite(one_src, phi[i], phiLoc);
+    }
+
+    if (!inputParams.symmetric) {
+      std::cout << GridLogMessage << "  rho source at: (" << rhoLoc[0] << ","
+                << rhoLoc[1] << "," << rhoLoc[2] << "," << rhoLoc[3] << ")"
+                << std::endl;
+      rho.resize(blockSize, &grid);
+      for (unsigned int i = 0; i < blockSize; ++i) {
+        rho[i] = Zero();
+        typename FermionField::scalar_object one_src;
+        one_src = 1.0;
+        pokeSite(one_src, rho[i], rhoLoc);
+      }
+    }
+  } else {
+    std::cout << GridLogMessage << "Initialising random meson fields"
+              << std::endl;
+
+    for (unsigned int i = 0; i < blockSize; ++i) {
+      random(pRNG, phi[i]);
+    }
+
+    if (!inputParams.symmetric) {
+      rho.resize(blockSize, &grid);
+      for (unsigned int i = 0; i < blockSize; ++i) {
+        random(pRNG, rho[i]);
+      }
     }
   }
 
@@ -143,34 +194,34 @@ int main(int argc, char *argv[]) {
 
   start = usecond();
   nvtxRangePushA("Grid utils");
-  cudaProfilerStart();
-  auto rho_p = &phi[0];
+  // cudaProfilerStart();
+  std::vector<FermionField> &rho_ref = phi;
   if (!inputParams.symmetric) {
-    rho_p = &rho[0];
+    rho_ref = rho;
   }
   std::cout << GridLogMessage << "Found: " << inputParams.mfType << std::endl;
   switch (inputParams.mfType) {
   case MFType::prod:
     std::cout << GridLogMessage << "Running Production MesonField" << std::endl;
-    worker.StagMesonField(Mpp, rho_p, nullptr, &phi[0], nullptr);
+    worker.StagMesonField(Mpp, &rho_ref[0], nullptr, &phi[0], nullptr);
     break;
   case MFType::dev:
     std::cout << GridLogMessage << "Running Development MesonField"
               << std::endl;
-    DevA2Autils<StaggeredImplR>::MesonField(Mpp, phi, phi, spinTastes, phases,
-                                            Tp);
+    DevA2Autils<StaggeredImplR>::MesonField(Mpp, rho_ref, phi, spinTastes,
+                                            phases, Tp);
     break;
   case MFType::cached:
     std::cout << GridLogMessage << "Running Development MesonField"
               << std::endl;
-    DevA2AutilsCached<StaggeredImplR>::MesonField(Mpp, phi, phi, spinTastes,
+    DevA2AutilsCached<StaggeredImplR>::MesonField(Mpp, rho_ref, phi, spinTastes,
                                                   phases, Tp);
     break;
   default:
     std::cout << GridLogMessage << "Unknown MFType" << std::endl;
     break;
   }
-  cudaProfilerStop();
+  // cudaProfilerStop();
   nvtxRangePop();
   stop = usecond();
   std::cout << GridLogMessage << "M(rho,phi) created, execution time "

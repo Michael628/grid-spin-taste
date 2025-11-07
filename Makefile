@@ -35,9 +35,20 @@ distclean: clean
 	rm -f build/Makefile
 
 # Free field run targets
-run-l4444-free: build
-	@echo "Running stag_gamma with free field parameters (4x4x4x4 lattice)..."
-	cd test && ../build/stag_gamma params/param_free_l4444.xml --grid 4.4.4.4
+run-l4444-free-cached: build
+	@echo "Running meson_field with free field parameters (4x4x4x4 lattice)..."
+	cd test && gdb --args ../build/meson_field params/param_random_asym_cached_l4444.xml --grid 4.4.4.4
+
+# Free field run targets
+run-l4444-free-dev: build
+	@echo "Running meson_field with free field parameters (4x4x4x4 lattice)..."
+	cd test && ../build/meson_field params/param_random_asym_dev_l4444.xml --grid 4.4.4.4
+
+# Free field run targets
+run-l4444-free-prod: build
+	@echo "Running meson_field with free field parameters (4x4x4x4 lattice)..."
+	cd test && ../build/meson_field params/param_random_asym_prod_l4444.xml --grid 4.4.4.4
+	# cd test && ../build/meson_field params/param_meson_field_free_l4444.xml --grid 4.4.4.4
 
 run-l6666-free: build
 	@echo "Running stag_gamma with free field parameters (6x6x6x6 lattice)..."

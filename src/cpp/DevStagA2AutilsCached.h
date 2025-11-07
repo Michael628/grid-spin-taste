@@ -11,36 +11,6 @@ NAMESPACE_BEGIN(Grid);
 
 #undef DELTA_F_EQ_2
 
-///////////////////////////////////////////////////////////////////
-// Meson
-//  Interested in
-//
-//       sum_x,y Trace[ G S(x,tx,y,ty) G S(y,ty,x,tx) ]
-//
-//  Conventional meson field:
-//
-//     = sum_x,y Trace[ sum_j G |v_j(y,ty)> <w_j(x,tx)|  G sum_i |v_i(x,tx)
-//     ><w_i(y,ty)| ] = sum_ij sum_x,y < w_j(x,tx)| G |v_i(x,tx) > <w_i(y,ty)
-//     (x)|G| v_j(y,ty) > = sum_ij PI_ji(tx) PI_ij(ty)
-//
-//  G5-Hermiticity
-//
-//       sum_x,y Trace[ G S(x,tx,y,ty) G S(y,ty,x,tx) ]
-//     = sum_x,y Trace[ G S(x,tx,y,ty) G g5 S^dag(x,tx,y,ty) g5 ]
-//     = sum_x,y Trace[ g5 G sum_j |v_j(y,ty)> <w_j(x,tx)|  G g5 sum_i
-//     (|v_j(y,ty)> <w_i(x,tx)|)^dag ]      --  (*)
-//
-//  NB:  Dag applies to internal indices spin,colour,complex
-//
-//     = sum_ij sum_x,y Trace[ g5 G |v_j(y,ty)> <w_j(x,tx)|  G g5  |w_i(x,tx)>
-//     <v_i(y,ty)| ] = sum_ij sum_x,y <v_i(y,ty)|g5 G |v_j(y,ty)> <w_j(x,tx)|  G
-//     g5 |w_i(x,tx)> = sum_ij  PionVV(ty) PionWW(tx)
-//
-//  (*) is only correct estimator if w_i and w_j come from distinct noise sets
-//  to preserve the kronecker
-//      expectation value. Otherwise biased.
-////////////////////////////////////////////////////////////////////
-
 template <typename... Ts> struct print_types;
 
 template <typename FImpl> class DevA2AutilsCached {
@@ -76,10 +46,10 @@ public:
 extern const int devA2Ablocking;
 
 template <typename vtype>
-using iVecStag = iVector<iScalar<iScalar<vtype>>, devA2Ablocking>;
-typedef iVecStag<Complex> VecStag;
-typedef iVecStag<vComplex> vVecStag;
-typedef Lattice<vVecStag> LatticeVecStag;
+using iMatStag = iMatrix<iScalar<iScalar<vtype>>, devA2Ablocking>;
+typedef iMatStag<Complex> MatStag;
+typedef iMatStag<vComplex> vMatStag;
+typedef Lattice<vMatStag> LatticeMatStag;
 
 #define A2A_GPU_KERNELS
 
@@ -110,9 +80,11 @@ void DevA2AutilsCached<FImpl>::MesonField(
   int Ngamma = gammas.size();
   int Nmom = mom.size();
 
+  // Allocate Nmom*Ngamma complex vectors
   std::vector<ComplexField> momGamma(Nmom * Ngamma, grid);
   StagGamma spinTaste;
 
+  // Instantiate momenta and gammas
   for (int m = 0; m < Nmom; m++) {
     for (int mu = 0; mu < Ngamma; mu++) {
       int mmu = m * Ngamma + mu;
@@ -124,88 +96,137 @@ void DevA2AutilsCached<FImpl>::MesonField(
   }
 
   std::cout << GridLogMessage << "A2A Meson Field" << std::endl;
-  MyMomentumProject<LatticeVecStag, ComplexField> MP;
+  SpatialTrace<ComplexField, ComplexField, MatStag> ST;
 
   MemoryManager::Print();
 
-  std::cout << GridLogMessage << "Allocating BLAS arrays" << std::endl;
-  std::cout << GridLogMessage
-            << "scalar size=" << sizeof(LatticeVecStag::scalar_type)
-            << std::endl;
-  auto words = sizeof(LatticeVecStag::scalar_object) /
-               sizeof(LatticeVecStag::scalar_type);
-  std::cout << GridLogMessage << "words=" << words << std::endl;
-  auto ldims = grid->LocalDimensions();
+  // Get grid dimensions
+  int nd = grid->_ndimension;
+  Coordinate ldims = grid->LocalDimensions();
   auto nt = ldims[grid->Nd() - 1];
-  std::cout << GridLogMessage << "nt=" << nt << std::endl;
-  std::cout << GridLogMessage << "Nmom=" << Nmom << std::endl;
   auto nxyz = grid->lSites() / nt;
-  std::cout << GridLogMessage << "nxyz=" << nxyz << std::endl;
 
-  std::cout << GridLogMessage << "BLAS_V size=" << (nxyz * nt * words)
-            << std::endl;
-  std::cout << GridLogMessage << "BLAS_M size=" << (Nmom * nxyz) << std::endl;
-  std::cout << GridLogMessage << "BLAS_P size=" << (Nmom * nt * words)
-            << std::endl;
+  // Allocate BLAS buffers
+  // BLAS_L.resize(nt * nxyz * nleft * leftWords);
+  // BLAS_R.resize(nt * nxyz * nright * rightWords);
+  // BLAS_T.resize(nt * nresults * resultWords);
+  ST.Allocate(Nmom * Ngamma, block * block, grid);
 
-  MP.Allocate(Nmom * Ngamma, grid);
-  std::cout << GridLogMessage << "Importing momenta" << std::endl;
-  MP.ImportMomenta(momGamma);
-  std::cout << GridLogMessage << "Momentum project momenta imported"
-            << std::endl;
+  auto blas_g = ST.getBlasLeftPointer();
+  auto blas_ip = ST.getBlasRightPointer();
+  auto imap_p = ST.getImapPointer();
+  auto omap_p = ST.getOmapPointer();
 
-  A2AFieldView<vobj> rhs_view;
-  std::vector<VecStag> sliced;
-  auto blas_vp = MP.getBlasVectorPointer();
-  auto imap_p = MP.getImapPointer();
-  auto omap_p = MP.getOmapPointer();
+  // Initialize BLAS_L
+  for (int mmu = 0; mmu < Nmom * Ngamma; mmu++) {
+    autoView(momG_v, momGamma[mmu], AcceleratorRead);
 
-  // print_types<vobj, vector_type, scalar_type> dummy;
+    int64_t Nt = nt;
+    int64_t Nxyz = nxyz;
+    int64_t Nleft = Nmom * Ngamma;
 
-  for (int i = 0; i < Lblock; i++) {
-    autoView(lhs_v, lhs_wi[i], AcceleratorRead);
+    accelerator_for(ls, grid->lSites(), 1, {
+      auto ss = omap_p[ls];
+      auto lane = imap_p[ls];
+
+      int64_t l_t = ls / Nxyz;
+      int64_t l_xyz = ls % Nxyz;
+      auto data = extractLane(lane, momG_v[ss]);
+
+      uint64_t idx = mmu + l_xyz * Nleft + l_t * Nxyz * Nleft;
+      // uint64_t idx = l_xyz + mmu * Nxyz + l_t * Nxyz * Nleft;
+      blas_g[idx] = data;
+    });
+  }
+
+  A2AFieldView<vobj> lhs_view, rhs_view;
+
+  for (int io = 0; io < Lblock; io += block) {
+    int nlcache = MIN(Lblock - io, block);
+
+    std::cout << GridLogMessage << "Computing inner products for block " << io
+              << " of " << Lblock << std::endl;
+
+    lhs_view.openViews(&lhs_wi[io], nlcache);
+    auto lhs_v = lhs_view.getView();
+
     for (int jo = 0; jo < Rblock; jo += block) {
+      int nrcache = MIN(Rblock - jo, block);
 
-      rhs_view.openViews(&rhs_vj[jo], MIN(Rblock - jo, block));
+      std::cout << GridLogMessage << "Computing inner products for block " << jo
+                << " of " << Rblock << std::endl;
+
+      rhs_view.openViews(&rhs_vj[jo], nrcache);
       auto rhs_v = rhs_view.getView();
-      size_t nwords = MIN(Rblock - jo, block);
 
-      nvtxRangePushA("local Inner");
-      accelerator_for2d(ls, grid->lSites(), word, nwords, 1, {
-        auto idx = ls * block + word;
+      nvtxRangePushA("Compute inner products");
+
+      int64_t Nt = nt;
+      int64_t Nxyz = nxyz;
+      int64_t Niprod = block * block; // Maximum size allocated
+
+      // take local inner product
+      // and Initialize BLAS_R
+      accelerator_for2d(ls, grid->lSites(), ii, nlcache, 1, {
+        // Map from blas layout to grid lattice layout
         auto ss = omap_p[ls];
         auto lane = imap_p[ls];
 
-        auto left = lhs_v(ss);
-        auto right = rhs_v[word](ss);
-        Scalar_v vv;
+        int64_t l_t = ls / Nxyz;
+        int64_t l_xyz = ls % Nxyz;
 
-        vv = innerProduct(left, right);
-        blas_vp[idx] = extractLane(lane, vv);
+        auto left = lhs_v[ii][ss];
+
+        for (int jj = 0; jj < nrcache; jj++) {
+          auto right = rhs_v[jj][ss];
+          Scalar_v vv;
+
+          vv = innerProduct(left, right);
+          auto data = extractLane(lane, vv);
+
+          int64_t word_idx = ii * block + jj;
+          // uint64_t idx = word_idx + l_xyz * Niprod + l_t * Nxyz * Niprod;
+          uint64_t idx = l_xyz + word_idx * Nxyz + l_t * Nxyz * Niprod;
+          blas_ip[idx] = data;
+        }
       });
+
       nvtxRangePop();
 
       rhs_view.closeViews();
 
-      assert(orthogdim == Nd - 1);
-      nvtxRangePushA("blas offload");
-      MP.Project(sliced);
+      nvtxRangePushA("SpatialTrace");
+
+      std::vector<MatStag> trace_result;
+      ST.Trace(trace_result);
+
       nvtxRangePop();
 
-      nvtxRangePushA("gamma loop");
+      nvtxRangePushA("Extract results");
+
       thread_for2d(mmom, Nmom * Ngamma, t, Nt, {
         int m = mmom / Ngamma;
         int mu = mmom % Ngamma;
-        int idx = t + mmom * Nt;
-        for (int j = jo; j < MIN(Rblock, jo + block); j++) {
-          int jj = j % block;
-          auto tmp = peekIndex<LorentzIndex>(sliced[idx], jj);
-          mat((long)m, mu, (long)t, i, j) = tmp()();
+        int idx = mmom + Nmom * Ngamma * t;
+
+        for (int i = io; i < MIN(Lblock, io + block); i++) {
+          int ii = i % block;
+          for (int j = jo; j < MIN(Rblock, jo + block); j++) {
+            int jj = j % block;
+
+            auto tmp = peekIndex<LorentzIndex>(trace_result[idx], ii, jj);
+            mat((long)m, mu, (long)t, i, j) = tmp()();
+          }
         }
       });
+
       nvtxRangePop();
+
     } // jo
-  }
+
+    lhs_view.closeViews();
+
+  } // io
 }
 
 NAMESPACE_END(Grid);
