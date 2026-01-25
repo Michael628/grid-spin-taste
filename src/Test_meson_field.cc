@@ -29,8 +29,10 @@ directory
 // clang-format off
 #include <Grid/Grid.h>
 #include <ProdStagA2Autils.h>
-#include <DevStagA2Autils.h>
-#include <DevStagA2AutilsCached.h>
+#include <DevStagA2AutilsBuggy.h>
+#include <DevStagA2AutilsMat.h>
+#include <DevStagA2AutilsFlatMat.h>
+#include <DevStagA2AutilsVector.h>
 #include <StagGamma.h>
 // #include <cuda_profiler_api.h>
 #include <nvtx3/nvToolsExt.h>
@@ -41,7 +43,8 @@ using namespace Grid;
 typedef typename NaiveStaggeredFermionD::ComplexField ComplexField;
 typedef typename NaiveStaggeredFermionD::FermionField FermionField;
 
-GRID_SERIALIZABLE_ENUM(MFType, undef, prod, 0, dev, 1, cached, 2);
+GRID_SERIALIZABLE_ENUM(MFType, undef, prod, 0, buggy, 1, mat, 2, flatmat, 3,
+                       vector, 4);
 GRID_SERIALIZABLE_ENUM(SourceType, undef, random, 0, point, 1);
 
 // clang-format off
@@ -205,16 +208,26 @@ int main(int argc, char *argv[]) {
     std::cout << GridLogMessage << "Running Production MesonField" << std::endl;
     worker.StagMesonField(Mpp, &rho_ref[0], nullptr, &phi[0], nullptr);
     break;
-  case MFType::dev:
-    std::cout << GridLogMessage << "Running Development MesonField"
-              << std::endl;
-    DevA2Autils<StaggeredImplR>::MesonField(Mpp, rho_ref, phi, spinTastes,
-                                            phases, Tp);
+  case MFType::buggy:
+    std::cout << GridLogMessage
+              << "Running Broken (Momentum Project) MesonField" << std::endl;
+    DevA2AutilsBuggy<StaggeredImplR>::MesonField(Mpp, rho_ref, phi, spinTastes,
+                                                 phases, Tp);
     break;
-  case MFType::cached:
-    std::cout << GridLogMessage << "Running Development MesonField"
+  case MFType::mat:
+    std::cout << GridLogMessage << "Running MatObj MesonField" << std::endl;
+    DevA2AutilsMat<StaggeredImplR>::MesonField(Mpp, rho_ref, phi, spinTastes,
+                                               phases, Tp);
+    break;
+  case MFType::flatmat:
+    std::cout << GridLogMessage << "Running Flattened loop MatObj MesonField"
               << std::endl;
-    DevA2AutilsCached<StaggeredImplR>::MesonField(Mpp, rho_ref, phi, spinTastes,
+    DevA2AutilsFlatMat<StaggeredImplR>::MesonField(Mpp, rho_ref, phi,
+                                                   spinTastes, phases, Tp);
+    break;
+  case MFType::vector:
+    std::cout << GridLogMessage << "Running VecObj MesonField" << std::endl;
+    DevA2AutilsVector<StaggeredImplR>::MesonField(Mpp, rho_ref, phi, spinTastes,
                                                   phases, Tp);
     break;
   default:

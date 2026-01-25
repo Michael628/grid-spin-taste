@@ -4,7 +4,7 @@
 #include <Grid/Grid_Eigen_Tensor.h>
 #include <MomentumProject.h>
 #include <StagGamma.h>
-// #include <nvtx3/nvToolsExt.h>
+#include <nvtx3/nvToolsExt.h>
 
 NAMESPACE_BEGIN(Grid);
 
@@ -40,7 +40,7 @@ NAMESPACE_BEGIN(Grid);
 //      expectation value. Otherwise biased.
 ////////////////////////////////////////////////////////////////////
 
-template <typename FImpl> class DevA2Autils {
+template <typename FImpl> class DevA2AutilsBuggy {
 public:
   typedef typename FImpl::ComplexField ComplexField;
   typedef typename FImpl::FermionField FermionField;
@@ -82,7 +82,7 @@ typedef Lattice<vVecStag> LatticeVecStag;
 
 template <class FImpl>
 template <typename TensorType>
-void DevA2Autils<FImpl>::MesonField(
+void DevA2AutilsBuggy<FImpl>::MesonField(
     TensorType &mat, std::vector<FermionField> &lhs_wi,
     std::vector<FermionField> &rhs_vj,
     std::vector<StagGamma::SpinTastePair> gammas,
@@ -163,7 +163,7 @@ void DevA2Autils<FImpl>::MesonField(
       rhs_view.openViews(&rhs_vj[jo], MIN(Rblock - jo, block));
       auto rhs_v = rhs_view.getView();
 
-      // nvtxRangePushA("local Inner");
+      nvtxRangePushA("local Inner");
       accelerator_for(ss, grid->oSites(), (size_t)Nsimd, {
         auto left = lhs_v(ss);
         auto vv = spinMat_v(ss);
@@ -173,16 +173,16 @@ void DevA2Autils<FImpl>::MesonField(
         }
         coalescedWrite(spinMat_v[ss], vv);
       });
-      // nvtxRangePop();
+      nvtxRangePop();
 
       rhs_view.closeViews();
 
       assert(orthogdim == Nd - 1);
-      // nvtxRangePushA("blas offload");
+      nvtxRangePushA("spatial trace");
       MP.Project(spinMat, sliced);
-      // nvtxRangePop();
+      nvtxRangePop();
 
-      // nvtxRangePushA("gamma loop");
+      nvtxRangePushA("Extract results");
       thread_for2d(mmom, Nmom * Ngamma, t, Nt, {
         int m = mmom / Ngamma;
         int mu = mmom % Ngamma;
@@ -193,7 +193,7 @@ void DevA2Autils<FImpl>::MesonField(
           mat((long)m, mu, (long)t, i, j) = tmp()();
         }
       });
-      // nvtxRangePop();
+      nvtxRangePop();
     } // jo
   }
 }

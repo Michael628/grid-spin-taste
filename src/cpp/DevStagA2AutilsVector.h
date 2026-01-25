@@ -2,7 +2,7 @@
 // #include <Grid/Hadrons/Global.hpp>
 #include <A2AView.h>
 #include <Grid/Grid_Eigen_Tensor.h>
-#include <SpatialTrace.h>
+#include <SpatialTraceVector.h>
 #include <StagGamma.h>
 #include <nvtx3/nvToolsExt.h>
 #include <typeinfo>
@@ -13,7 +13,7 @@ NAMESPACE_BEGIN(Grid);
 
 template <typename... Ts> struct print_types;
 
-template <typename FImpl> class DevA2AutilsCached {
+template <typename FImpl> class DevA2AutilsVector {
 public:
   typedef typename FImpl::ComplexField ComplexField;
   typedef typename FImpl::FermionField FermionField;
@@ -46,16 +46,14 @@ public:
 extern const int devA2Ablocking;
 
 template <typename vtype>
-using iMatStag = iMatrix<iScalar<iScalar<vtype>>, devA2Ablocking>;
-typedef iMatStag<Complex> MatStag;
-typedef iMatStag<vComplex> vMatStag;
-typedef Lattice<vMatStag> LatticeMatStag;
+using iVecStag = iVector<iScalar<iScalar<vtype>>, devA2Ablocking>;
+typedef iVecStag<Complex> VecStag;
 
 #define A2A_GPU_KERNELS
 
 template <class FImpl>
 template <typename TensorType>
-void DevA2AutilsCached<FImpl>::MesonField(
+void DevA2AutilsVector<FImpl>::MesonField(
     TensorType &mat, std::vector<FermionField> &lhs_wi,
     std::vector<FermionField> &rhs_vj,
     std::vector<StagGamma::SpinTastePair> gammas,
@@ -76,7 +74,6 @@ void DevA2AutilsCached<FImpl>::MesonField(
   //  const int    Nd = grid->_ndimension;
   const int Nsimd = grid->Nsimd();
 
-  int Nt = grid->GlobalDimensions()[orthogdim];
   int Ngamma = gammas.size();
   int Nmom = mom.size();
 
@@ -96,7 +93,7 @@ void DevA2AutilsCached<FImpl>::MesonField(
   }
 
   std::cout << GridLogMessage << "A2A Meson Field" << std::endl;
-  SpatialTrace<ComplexField, ComplexField, MatStag> ST;
+  SpatialTraceVector<ComplexField, ComplexField, VecStag> ST;
 
   MemoryManager::Print();
 
@@ -110,123 +107,112 @@ void DevA2AutilsCached<FImpl>::MesonField(
   // BLAS_L.resize(nt * nxyz * nleft * leftWords);
   // BLAS_R.resize(nt * nxyz * nright * rightWords);
   // BLAS_T.resize(nt * nresults * resultWords);
-  ST.Allocate(Nmom * Ngamma, block * block, grid);
+  ST.Allocate(Nmom * Ngamma, block, grid);
 
   auto blas_g = ST.getBlasLeftPointer();
   auto blas_ip = ST.getBlasRightPointer();
-  auto imap_p = ST.getImapPointer();
-  auto omap_p = ST.getOmapPointer();
+  auto tMap_p = ST.getTmapPointer();
+  auto xyzMap_p = ST.getXYZmapPointer();
+
+  uint64_t osites = grid->oSites();
 
   // Initialize BLAS_L
   for (int mmu = 0; mmu < Nmom * Ngamma; mmu++) {
     autoView(momG_v, momGamma[mmu], AcceleratorRead);
 
-    int64_t Nt = nt;
-    int64_t Nxyz = nxyz;
     int64_t Nleft = Nmom * Ngamma;
 
-    accelerator_for(ls, grid->lSites(), 1, {
-      auto ss = omap_p[ls];
-      auto lane = imap_p[ls];
+    accelerator_for(os, osites, Nsimd, {
+      auto lane = acceleratorSIMTlane(Nsimd);
+      auto lane_idx = lane * osites;
 
-      int64_t l_t = ls / Nxyz;
-      int64_t l_xyz = ls % Nxyz;
-      auto data = extractLane(lane, momG_v[ss]);
+      auto data = extractLane(lane, momG_v[os]);
 
-      uint64_t idx = mmu + l_xyz * Nleft + l_t * Nxyz * Nleft;
-      // uint64_t idx = l_xyz + mmu * Nxyz + l_t * Nxyz * Nleft;
+      uint64_t idx = mmu + xyzMap_p[lane_idx + os] * Nleft +
+                     tMap_p[lane_idx + os] * nxyz * Nleft;
       blas_g[idx] = data;
     });
   }
 
-  A2AFieldView<vobj> lhs_view, rhs_view;
+  A2AFieldView<vobj> rhs_view;
 
-  for (int io = 0; io < Lblock; io += block) {
-    int nlcache = MIN(Lblock - io, block);
+  for (int jo = 0; jo < Rblock; jo += block) {
+    int nrcache = MIN(Rblock - jo, block);
 
-    std::cout << GridLogMessage << "Computing inner products for block " << io
-              << " of " << Lblock << std::endl;
+    std::cout << GridLogMessage << "Computing inner products for block " << jo
+              << " of " << Rblock << std::endl;
 
-    lhs_view.openViews(&lhs_wi[io], nlcache);
-    auto lhs_v = lhs_view.getView();
+    rhs_view.openViews(&rhs_vj[jo], nrcache);
+    auto rhs_v = rhs_view.getView();
 
-    for (int jo = 0; jo < Rblock; jo += block) {
-      int nrcache = MIN(Rblock - jo, block);
+    for (int i = 0; i < Lblock; i++) {
+      autoView(lhs_v, lhs_wi[i], AcceleratorRead);
 
-      std::cout << GridLogMessage << "Computing inner products for block " << jo
-                << " of " << Rblock << std::endl;
-
-      rhs_view.openViews(&rhs_vj[jo], nrcache);
-      auto rhs_v = rhs_view.getView();
-
-      nvtxRangePushA("Compute inner products");
-
-      int64_t Nt = nt;
-      int64_t Nxyz = nxyz;
-      int64_t Niprod = block * block; // Maximum size allocated
+      if (i == 0) {
+        nvtxRangePushA("inner_profile");
+      }
+      nvtxRangePushA("local Inner");
 
       // take local inner product
       // and Initialize BLAS_R
-      accelerator_for2d(ls, grid->lSites(), ii, nlcache, 1, {
+      // Parallelize over all (ii, jj, os) combinations
+      uint64_t total_work = (uint64_t)nrcache * osites;
+
+      accelerator_for(work_idx, total_work, Nsimd, {
+        uint32_t os = work_idx % osites;
+        uint32_t jj = work_idx / osites;
+
         // Map from blas layout to grid lattice layout
-        auto ss = omap_p[ls];
-        auto lane = imap_p[ls];
+        auto lane = acceleratorSIMTlane(Nsimd);
+        auto lane_idx = lane * osites + os;
 
-        int64_t l_t = ls / Nxyz;
-        int64_t l_xyz = ls % Nxyz;
+        Scalar_v vv;
 
-        auto left = lhs_v[ii][ss];
+        vv = innerProduct(coalescedRead(lhs_v[os]),
+                          coalescedRead(rhs_v[jj][os]));
+        auto data = extractLane(lane, vv);
 
-        for (int jj = 0; jj < nrcache; jj++) {
-          auto right = rhs_v[jj][ss];
-          Scalar_v vv;
+        // HOISTED: Compute invariant terms and index
+        uint64_t word_offset = jj * nxyz;
+        uint64_t t_stride = nxyz * block;
+        uint64_t xyz = xyzMap_p[lane_idx];
+        uint64_t t = tMap_p[lane_idx];
+        uint64_t idx = xyz + word_offset + t * t_stride;
 
-          vv = innerProduct(left, right);
-          auto data = extractLane(lane, vv);
-
-          int64_t word_idx = ii * block + jj;
-          // uint64_t idx = word_idx + l_xyz * Niprod + l_t * Nxyz * Niprod;
-          uint64_t idx = l_xyz + word_idx * Nxyz + l_t * Nxyz * Niprod;
-          blas_ip[idx] = data;
-        }
+        blas_ip[idx] = data;
       });
 
       nvtxRangePop();
 
-      rhs_view.closeViews();
-
+      if (i == 0) {
+        nvtxRangePop();
+      }
       nvtxRangePushA("SpatialTrace");
 
-      std::vector<MatStag> trace_result;
+      std::vector<VecStag> trace_result;
       ST.Trace(trace_result);
 
       nvtxRangePop();
 
       nvtxRangePushA("Extract results");
 
-      thread_for2d(mmom, Nmom * Ngamma, t, Nt, {
+      thread_for2d(mmom, Nmom * Ngamma, t, nt, {
         int m = mmom / Ngamma;
         int mu = mmom % Ngamma;
         int idx = mmom + Nmom * Ngamma * t;
 
-        for (int i = io; i < MIN(Lblock, io + block); i++) {
-          int ii = i % block;
-          for (int j = jo; j < MIN(Rblock, jo + block); j++) {
-            int jj = j % block;
+        for (int j = jo; j < MIN(Rblock, jo + block); j++) {
+          int jj = j % block;
 
-            auto tmp = peekIndex<LorentzIndex>(trace_result[idx], ii, jj);
-            mat((long)m, mu, (long)t, i, j) = tmp()();
-          }
+          auto tmp = peekIndex<LorentzIndex>(trace_result[idx], jj);
+          mat((long)m, mu, (long)t, i, j) = tmp()();
         }
       });
-
       nvtxRangePop();
+    } // i
 
-    } // jo
-
-    lhs_view.closeViews();
-
-  } // io
+    rhs_view.closeViews();
+  } // jo
 }
 
 NAMESPACE_END(Grid);
