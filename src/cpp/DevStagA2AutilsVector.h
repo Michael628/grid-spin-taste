@@ -148,47 +148,29 @@ void DevA2AutilsVector<FImpl>::MesonField(
     for (int i = 0; i < Lblock; i++) {
       autoView(lhs_v, lhs_wi[i], AcceleratorRead);
 
-      if (i == 0) {
-        nvtxRangePushA("inner_profile");
-      }
-      nvtxRangePushA("local Inner");
-
-      // take local inner product
-      // and Initialize BLAS_R
-      // Parallelize over all (ii, jj, os) combinations
-      uint64_t total_work = (uint64_t)nrcache * osites;
-
-      accelerator_for(work_idx, total_work, Nsimd, {
-        uint32_t os = work_idx % osites;
-        uint32_t jj = work_idx / osites;
-
-        // Map from blas layout to grid lattice layout
+      nvtxRangePushA("local_inner");
+      accelerator_for(jj, nrcache, Nsimd, {
         auto lane = acceleratorSIMTlane(Nsimd);
-        auto lane_idx = lane * osites + os;
+        auto lane_idx = lane * osites;
+        vobj *b_p = blas_ip + lane_idx;
+        auto xyz_p = xyzMap_p + lane;
+        auto t_p = tMap_p[lane_idx];
+        uint64_t word_offset, t_stride, xyz, t, idx;
+        for (int os = 0; os < osites; os++) {
+          word_offset = jj * nxyz;
+          t_stride = nxyz * block;
+          xyz = xyz_p[os];
+          t = t_p[os];
+          idx = (xyz + word_offset + t * t_stride) / Nsimd;
 
-        Scalar_v vv;
-
-        vv = innerProduct(coalescedRead(lhs_v[os]),
-                          coalescedRead(rhs_v[jj][os]));
-        auto data = extractLane(lane, vv);
-
-        // HOISTED: Compute invariant terms and index
-        uint64_t word_offset = jj * nxyz;
-        uint64_t t_stride = nxyz * block;
-        uint64_t xyz = xyzMap_p[lane_idx];
-        uint64_t t = tMap_p[lane_idx];
-        uint64_t idx = xyz + word_offset + t * t_stride;
-
-        blas_ip[idx] = data;
+          coalescedWrite(&b_p[idx], innerProduct(coalescedRead(lhs_v[os]),
+                                                 coalescedRead(rhs_v[jj][os])));
+        }
       });
 
       nvtxRangePop();
 
-      if (i == 0) {
-        nvtxRangePop();
-      }
-      nvtxRangePushA("SpatialTrace");
-
+      nvtxRangePushA("Trace");
       std::vector<VecStag> trace_result;
       ST.Trace(trace_result);
 
