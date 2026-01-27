@@ -1,10 +1,13 @@
 # Main Makefile for stag_gamma project
 # This orchestrates configuration, building and running the stag_gamma executable
 
-.PHONY: configure build clean distclean run run-free run-l4444-free run-l6666-free run-l8888-free run-l4444 run-with-args help
+.PHONY: configure build build-meson_field build-grid_lmi clean distclean run run-free run-l4444-free run-l6666-free run-l8888-free run-l4444 run-with-args help
 
 # Default target
 all: build
+
+# Configure arguments (can be overridden on command line)
+CONFIGURE_ARGS ?=
 
 # Configure the build system
 configure:
@@ -14,13 +17,23 @@ configure:
 	fi
 	@if [ ! -f build/Makefile ]; then \
 		echo "Running configure..."; \
-		./configure; \
+		./configure $(CONFIGURE_ARGS); \
 	fi
 
 # Build the stag_gamma executable using the build directory Makefile
 build: configure
 	@echo "Building stag_gamma..."
 	$(MAKE) -C build stag_gamma
+
+# Build the meson_field executable using the build directory Makefile
+build-meson_field: configure
+	@echo "Building meson_field..."
+	$(MAKE) -C build meson_field
+
+# Build the meson_field executable using the build directory Makefile
+build-grid_lmi: configure
+	@echo "Building grid_lmi..."
+	$(MAKE) -C build grid_lmi
 
 # Clean build artifacts
 clean:
@@ -35,17 +48,17 @@ distclean: clean
 	rm -f build/Makefile
 
 # Free field run targets
-run-l4444-free-cached: build
+run-l4444-free-cached: build-meson_field
 	@echo "Running meson_field with free field parameters (4x4x4x4 lattice)..."
 	cd test && gdb --args ../build/meson_field params/param_random_asym_cached_l4444.xml --grid 4.4.4.4
 
 # Free field run targets
-run-l4444-free-dev: build
+run-l4444-free-dev: build-meson_field
 	@echo "Running meson_field with free field parameters (4x4x4x4 lattice)..."
 	cd test && ../build/meson_field params/param_random_asym_dev_l4444.xml --grid 4.4.4.4
 
 # Free field run targets
-run-l4444-free-prod: build
+run-l4444-free-prod: build-meson_field
 	@echo "Running meson_field with free field parameters (4x4x4x4 lattice)..."
 	cd test && ../build/meson_field params/param_random_asym_prod_l4444.xml --grid 4.4.4.4
 	# cd test && ../build/meson_field params/param_meson_field_free_l4444.xml --grid 4.4.4.4
@@ -101,6 +114,7 @@ help:
 	@echo "Available targets:"
 	@echo "  configure       - Generate and run configure script"
 	@echo "  build           - Compile the stag_gamma executable"
+	@echo "  build-meson_field - Compile the meson_field executable"
 	@echo "  clean           - Clean build artifacts"
 	@echo "  distclean       - Clean everything including configure files"
 	@echo ""
@@ -118,8 +132,15 @@ help:
 	@echo "  run             - Show available run options"
 	@echo "  help            - Show this help message"
 	@echo ""
-	@echo "Configuration options:"
-	@echo "  ./configure --with-grid=PATH        - Specify Grid installation path"
-	@echo "  ./configure --enable-optimization   - Enable compiler optimizations"
-	@echo "  ./configure --enable-debug          - Enable debug symbols"
-	@echo "  ./configure --with-a2a-blocking=N   - Set A2A blocking size (default: 128)"
+	@echo "Configuration options (use with make configure CONFIGURE_ARGS=...):"
+	@echo "  --with-grid=PATH        - Specify Grid installation path"
+	@echo "  --enable-optimization   - Enable compiler optimizations"
+	@echo "  --enable-debug          - Enable debug symbols"
+	@echo "  --with-a2a-blocking=N   - Set A2A blocking size (default: 128)"
+	@echo ""
+	@echo "Examples:"
+	@echo "  make configure CONFIGURE_ARGS='--with-grid=/usr/local/grid'"
+	@echo "  make configure CONFIGURE_ARGS='--enable-debug --enable-optimization'"
+	@echo "  make CONFIGURE_ARGS='--with-grid=/path' configure build"
+	@echo ""
+	@echo "Note: To reconfigure with different options, run 'make distclean' first"
