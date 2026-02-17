@@ -46,7 +46,7 @@ meson_field: ../src/Test_meson_field.cc
 # 	nvcc -O3 $(INCLUDES) -o Test_meson_field meson_field.o $(CXXFLAGS)  $(LDFLAGS) $(LIBS) 
 
 grid_lmi: ../src/Grid_LMI.cc
-	$(COMPILER) $(INCLUDES) -I../src/cpp/gridlmi -o $@ $(GPUFLAGS) $(CXXFLAGS)  ../src/Grid_LMI.cc ../src/cpp/gridlmi/IO.cc  $(LDFLAGS) $(LIBS)
+	$(COMPILER) $(INCLUDES) -I../src/cpp/gridlmi -o $@ $(GPUFLAGS) $(CXXFLAGS)  ../src/Grid_LMI.cc ../src/cpp/gridlmi/TimerArray.cc ../src/cpp/gridlmi/IO.cc  $(LDFLAGS) $(LIBS)
 
 clean:
 	rm -f stag_gamma original_stag_gamma meson_field grid_lmi

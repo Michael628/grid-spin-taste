@@ -113,9 +113,9 @@ public:
       _offset.push_back(buffer.size());
 
       buffer.resize(buffer.size() + comm_buf_size);
-      buf_p = &buffer[_offset.back()];
 
       if (comm_buf_size > 0) {
+        buf_p = &buffer[_offset.back()];
         obj *comm_buf_p = stencil->CommBuf();
         accelerator_for(k, comm_buf_size, 1, { buf_p[k] = comm_buf_p[k]; });
       }

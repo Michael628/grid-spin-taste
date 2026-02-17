@@ -1,5 +1,5 @@
 /*
- * DilutedNoiseMILC.hpp, part of Hadrons (https://github.com/aportelli/Hadrons)
+ * DilutedNoise.hpp, part of Hadrons (https://github.com/aportelli/Hadrons)
  *
  * Copyright (C) 2015 - 2020
  *
@@ -39,16 +39,16 @@ NAMESPACE_BEGIN(Grid);
 /******************************************************************************
  *              Abstract container for spin color diagonal noise              *
  ******************************************************************************/
-template <typename FImpl> class SpinColorDiagonalNoiseMILC {
+template <typename FImpl> class SpinColorDiagonalNoise {
 public:
   typedef typename FImpl::FermionField FermionField;
   typedef typename FImpl::PropagatorField PropagatorField;
 
 public:
   // constructor/destructor
-  SpinColorDiagonalNoiseMILC(GridCartesian *g);
-  SpinColorDiagonalNoiseMILC(GridCartesian *g, const int nNoise);
-  virtual ~SpinColorDiagonalNoiseMILC(void) = default;
+  SpinColorDiagonalNoise(GridCartesian *g);
+  SpinColorDiagonalNoise(GridCartesian *g, const int nNoise);
+  virtual ~SpinColorDiagonalNoise(void) = default;
   // access
   FermionField &getFerm(const int i);
   PropagatorField &getProp(const int i);
@@ -87,16 +87,16 @@ private:
 };
 
 template <typename FImpl>
-class TimeDilutedNoiseMILC : public SpinColorDiagonalNoiseMILC<FImpl> {
+class TimeDilutedNoise : public SpinColorDiagonalNoise<FImpl> {
 public:
   typedef typename FImpl::FermionField FermionField;
   typedef typename FImpl::PropagatorField PropagatorField;
 
 public:
   // constructor/destructor
-  TimeDilutedNoiseMILC(GridCartesian *g);
-  TimeDilutedNoiseMILC(GridCartesian *g, const int nNoise);
-  virtual ~TimeDilutedNoiseMILC(void) = default;
+  TimeDilutedNoise(GridCartesian *g);
+  TimeDilutedNoise(GridCartesian *g, const int nNoise);
+  virtual ~TimeDilutedNoise(void) = default;
   int dilutionSize(void) const;
   Lattice<iScalar<vInteger>> &getTLat() { return tLat_; }
 
@@ -108,15 +108,15 @@ private:
 };
 
 template <typename FImpl>
-class FullVolumeNoiseMILC : public SpinColorDiagonalNoiseMILC<FImpl> {
+class FullVolumeNoise : public SpinColorDiagonalNoise<FImpl> {
 public:
   typedef typename FImpl::FermionField FermionField;
   typedef typename FImpl::PropagatorField PropagatorField;
 
 public:
   // constructor/destructor
-  FullVolumeNoiseMILC(GridCartesian *g, const int nNoise);
-  virtual ~FullVolumeNoiseMILC(void) = default;
+  FullVolumeNoise(GridCartesian *g, const int nNoise);
+  virtual ~FullVolumeNoise(void) = default;
   int dilutionSize(void) const;
 
 private:
@@ -124,15 +124,15 @@ private:
 };
 
 template <typename FImpl>
-class CheckerboardNoiseMILC : public SpinColorDiagonalNoiseMILC<FImpl> {
+class CheckerboardNoise : public SpinColorDiagonalNoise<FImpl> {
 public:
   typedef typename FImpl::FermionField FermionField;
   typedef typename FImpl::PropagatorField PropagatorField;
 
 public:
   // constructor/destructor
-  CheckerboardNoiseMILC(GridCartesian *g, const int nNoise, const int nSparse);
-  virtual ~CheckerboardNoiseMILC(void) = default;
+  CheckerboardNoise(GridCartesian *g, const int nNoise, const int nSparse);
+  virtual ~CheckerboardNoise(void) = default;
   int dilutionSize(void) const;
 
 private:
@@ -142,16 +142,16 @@ private:
 };
 
 template <typename FImpl>
-class SparseNoiseMILC : public SpinColorDiagonalNoiseMILC<FImpl> {
+class SparseNoise : public SpinColorDiagonalNoise<FImpl> {
 public:
   typedef typename FImpl::FermionField FermionField;
   typedef typename FImpl::PropagatorField PropagatorField;
 
 public:
   // constructor/destructor
-  SparseNoiseMILC(GridCartesian *g, const int nNoise, const int nSparseL,
-                  const int nSparseT);
-  virtual ~SparseNoiseMILC(void) = default;
+  SparseNoise(GridCartesian *g, const int nNoise, const int nSparseL,
+              const int nSparseT);
+  virtual ~SparseNoise(void) = default;
   int dilutionSize(void) const;
 
 private:
@@ -160,22 +160,22 @@ private:
   LatticeInteger coor_;
 };
 /******************************************************************************
- *               SpinColorDiagonalNoiseMILC template implementation *
+ *               SpinColorDiagonalNoise template implementation *
  ******************************************************************************/
 template <typename FImpl>
-SpinColorDiagonalNoiseMILC<FImpl>::SpinColorDiagonalNoiseMILC(GridCartesian *g)
+SpinColorDiagonalNoise<FImpl>::SpinColorDiagonalNoise(GridCartesian *g)
     : grid_(g), ferm_(g), prop_(g) {}
 
 template <typename FImpl>
-SpinColorDiagonalNoiseMILC<FImpl>::SpinColorDiagonalNoiseMILC(GridCartesian *g,
-                                                              const int nNoise)
-    : SpinColorDiagonalNoiseMILC(g) {
+SpinColorDiagonalNoise<FImpl>::SpinColorDiagonalNoise(GridCartesian *g,
+                                                      const int nNoise)
+    : SpinColorDiagonalNoise(g) {
   resize(nNoise);
 }
 
 template <typename FImpl>
 template <typename T>
-void SpinColorDiagonalNoiseMILC<FImpl>::setFerm(const int i) {
+void SpinColorDiagonalNoise<FImpl>::setFerm(const int i) {
   int nc = FImpl::Dimension;
   std::div_t divs;
   divs = std::div(i, nc);
@@ -184,8 +184,8 @@ void SpinColorDiagonalNoiseMILC<FImpl>::setFerm(const int i) {
 }
 
 template <typename FImpl>
-typename SpinColorDiagonalNoiseMILC<FImpl>::FermionField &
-SpinColorDiagonalNoiseMILC<FImpl>::getFerm(const int i) {
+typename SpinColorDiagonalNoise<FImpl>::FermionField &
+SpinColorDiagonalNoise<FImpl>::getFerm(const int i) {
   auto nsc = this->getNsc();
   std::div_t divs;
   divs = std::div(i, nsc);
@@ -195,7 +195,7 @@ SpinColorDiagonalNoiseMILC<FImpl>::getFerm(const int i) {
 }
 
 template <typename FImpl>
-void SpinColorDiagonalNoiseMILC<FImpl>::setPropagator(LatticeComplex *eta) {
+void SpinColorDiagonalNoise<FImpl>::setPropagator(LatticeComplex *eta) {
   prop_ = Zero();
   for (int i = 0; i < this->getNsc(); i++) {
     pokeColour(prop_, eta[i], i, i);
@@ -203,29 +203,27 @@ void SpinColorDiagonalNoiseMILC<FImpl>::setPropagator(LatticeComplex *eta) {
 }
 
 template <typename FImpl>
-typename SpinColorDiagonalNoiseMILC<FImpl>::PropagatorField &
-SpinColorDiagonalNoiseMILC<FImpl>::getProp(const int i) {
+typename SpinColorDiagonalNoise<FImpl>::PropagatorField &
+SpinColorDiagonalNoise<FImpl>::getProp(const int i) {
   setProp(i);
   return getProp();
 }
 
-template <typename FImpl>
-int SpinColorDiagonalNoiseMILC<FImpl>::size(void) const {
+template <typename FImpl> int SpinColorDiagonalNoise<FImpl>::size(void) const {
   return noise_.size() / this->getNsc();
 }
 
-template <typename FImpl>
-int SpinColorDiagonalNoiseMILC<FImpl>::getNd(void) const {
+template <typename FImpl> int SpinColorDiagonalNoise<FImpl>::getNd(void) const {
   return grid_->GlobalDimensions().size();
 }
 
 template <typename FImpl>
-void SpinColorDiagonalNoiseMILC<FImpl>::resize(const int nNoise) {
+void SpinColorDiagonalNoise<FImpl>::resize(const int nNoise) {
   noise_.resize(this->getNsc() * nNoise, grid_);
 }
 
 template <typename FImpl>
-void SpinColorDiagonalNoiseMILC<FImpl>::generateNoise(GridParallelRNG &rng) {
+void SpinColorDiagonalNoise<FImpl>::generateNoise(GridParallelRNG &rng) {
   Complex shift(1., 1.);
   LatticeComplex eta(grid_);
 
@@ -239,20 +237,18 @@ void SpinColorDiagonalNoiseMILC<FImpl>::generateNoise(GridParallelRNG &rng) {
 }
 
 /******************************************************************************
- *                  TimeDilutedNoiseMILC template implementation *
+ *                  TimeDilutedNoise template implementation *
  ******************************************************************************/
 template <typename FImpl>
-TimeDilutedNoiseMILC<FImpl>::TimeDilutedNoiseMILC(GridCartesian *g, int nNoise)
-    : SpinColorDiagonalNoiseMILC<FImpl>(g, nNoise), tLat_(g) {}
+TimeDilutedNoise<FImpl>::TimeDilutedNoise(GridCartesian *g, int nNoise)
+    : SpinColorDiagonalNoise<FImpl>(g, nNoise), tLat_(g) {}
 
-template <typename FImpl>
-int TimeDilutedNoiseMILC<FImpl>::dilutionSize() const {
+template <typename FImpl> int TimeDilutedNoise<FImpl>::dilutionSize() const {
   auto nt = this->getGrid()->GlobalDimensions()[Tp];
   return nt * this->getNsc() * this->size();
 }
 
-template <typename FImpl>
-void TimeDilutedNoiseMILC<FImpl>::setProp(const int i) {
+template <typename FImpl> void TimeDilutedNoise<FImpl>::setProp(const int i) {
   auto noise = this->getNoise();
   auto nd = this->getNd();
   auto nt = this->getGrid()->GlobalDimensions()[Tp];
@@ -272,29 +268,28 @@ void TimeDilutedNoiseMILC<FImpl>::setProp(const int i) {
 }
 
 /******************************************************************************
- *                   FullVolumeNoiseMILC template implementation *
+ *                   FullVolumeNoise template implementation *
  ******************************************************************************/
 template <typename FImpl>
-FullVolumeNoiseMILC<FImpl>::FullVolumeNoiseMILC(GridCartesian *g, int nNoise)
-    : SpinColorDiagonalNoiseMILC<FImpl>(g, nNoise) {}
+FullVolumeNoise<FImpl>::FullVolumeNoise(GridCartesian *g, int nNoise)
+    : SpinColorDiagonalNoise<FImpl>(g, nNoise) {}
 
-template <typename FImpl> int FullVolumeNoiseMILC<FImpl>::dilutionSize() const {
+template <typename FImpl> int FullVolumeNoise<FImpl>::dilutionSize() const {
   return this->getNsc() * this->size();
 }
 
-template <typename FImpl>
-void FullVolumeNoiseMILC<FImpl>::setProp(const int i) {
+template <typename FImpl> void FullVolumeNoise<FImpl>::setProp(const int i) {
   auto noise = this->getNoise();
   this->setPropagator(&noise[i * this->getNsc()]);
 }
 
 /******************************************************************************
- *                CheckerboardNoiseMILC template implementation *
+ *                CheckerboardNoise template implementation *
  ******************************************************************************/
 template <typename FImpl>
-CheckerboardNoiseMILC<FImpl>::CheckerboardNoiseMILC(GridCartesian *g,
-                                                    int nNoise, int nSparse)
-    : SpinColorDiagonalNoiseMILC<FImpl>(g, nNoise), nSparse_(nSparse), coor_(g),
+CheckerboardNoise<FImpl>::CheckerboardNoise(GridCartesian *g, int nNoise,
+                                            int nSparse)
+    : SpinColorDiagonalNoise<FImpl>(g, nNoise), nSparse_(nSparse), coor_(g),
       coorTot_(g) {
   if (nNoise % nSparse_ == 0) {
     nSrc_ec_ = nNoise / nSparse_;
@@ -303,13 +298,11 @@ CheckerboardNoiseMILC<FImpl>::CheckerboardNoiseMILC(GridCartesian *g,
   }
 }
 
-template <typename FImpl>
-int CheckerboardNoiseMILC<FImpl>::dilutionSize() const {
+template <typename FImpl> int CheckerboardNoise<FImpl>::dilutionSize() const {
   return this->getNsc() * this->size();
 }
 
-template <typename FImpl>
-void CheckerboardNoiseMILC<FImpl>::setProp(const int i) {
+template <typename FImpl> void CheckerboardNoise<FImpl>::setProp(const int i) {
   auto nd = this->getNd();
   auto noise = this->getNoise();
   auto nsc = this->getNsc();
@@ -336,20 +329,20 @@ void CheckerboardNoiseMILC<FImpl>::setProp(const int i) {
 }
 
 /******************************************************************************
- *                SparseNoiseMILC template implementation                   *
+ *                SparseNoise template implementation                   *
  ******************************************************************************/
 template <typename FImpl>
-SparseNoiseMILC<FImpl>::SparseNoiseMILC(GridCartesian *g, int nNoise,
-                                        int nSparseL, int nSparseT)
-    : SpinColorDiagonalNoiseMILC<FImpl>(g, nNoise), nSparseL_(nSparseL),
+SparseNoise<FImpl>::SparseNoise(GridCartesian *g, int nNoise, int nSparseL,
+                                int nSparseT)
+    : SpinColorDiagonalNoise<FImpl>(g, nNoise), nSparseL_(nSparseL),
       nSparseT_(nSparseT), coor_(g) {}
 
-template <typename FImpl> int SparseNoiseMILC<FImpl>::dilutionSize() const {
+template <typename FImpl> int SparseNoise<FImpl>::dilutionSize() const {
   auto nd = this->getNd();
   return this->getNsc() * this->size() * pow(nSparseL_, nd - 1) * nSparseT_;
 }
 
-template <typename FImpl> void SparseNoiseMILC<FImpl>::setProp(const int i) {
+template <typename FImpl> void SparseNoise<FImpl>::setProp(const int i) {
   auto nd = this->getNd();
   auto noise = this->getNoise();
   auto nsc = this->getNsc();

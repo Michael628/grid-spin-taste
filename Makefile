@@ -1,7 +1,7 @@
 # Main Makefile for stag_gamma project
 # This orchestrates configuration, building and running the stag_gamma executable
 
-.PHONY: configure build build-meson_field build-grid_lmi clean distclean run run-free run-l4444-free run-l6666-free run-l8888-free run-l4444 run-with-args help
+.PHONY: configure reconfigure build build-meson_field build-grid_lmi clean distclean run run-free run-l4444-free run-l6666-free run-l8888-free run-l4444 run-with-args help
 
 # Default target
 all: build
@@ -19,6 +19,11 @@ configure:
 		echo "Running configure..."; \
 		./configure $(CONFIGURE_ARGS); \
 	fi
+
+# Force reconfigure even if build/Makefile already exists
+reconfigure:
+	autoreconf -fiv
+	./configure $(CONFIGURE_ARGS)
 
 # Build the stag_gamma executable using the build directory Makefile
 build: configure

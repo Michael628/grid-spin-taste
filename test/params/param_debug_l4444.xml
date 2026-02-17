@@ -1,0 +1,185 @@
+<?xml version="1.0"?>
+<grid>
+  <parameters>
+    <series>a</series>
+    <trajectory>20</trajectory>
+    <gauge>
+      <type>file</type>
+      <link>configs/lat.sample.l4444.ildg</link>
+      <fatlink>configs/fatlinks.l4444.ildg</fatlink>
+      <longlink>configs/longlinks.l4444.ildg</longlink>
+    </gauge>
+
+    <!-- Eigenpack parameters for IRL -->
+    <epack>
+      <type>load</type>
+      <checker>odd</checker>
+      <seed>epack</seed>
+      <action>
+        <boundary>1 1 1 1</boundary>
+        <c1>1.0</c1>
+        <c2>1.0</c2>
+        <mass>0.0</mass>
+        <tad>1.0</tad>
+        <twist>0 0 0</twist>
+      </action>
+      <irl>
+        <lanczosParams>
+          <Cheby>
+            <Npoly>11</Npoly>
+            <alpha>0.009</alpha>
+            <!-- <alpha>0.009</alpha> -->
+            <!-- <beta>24</beta> -->
+            <beta>24</beta>
+          </Cheby>
+          <MaxIt>5000</MaxIt>
+          <MinRes>0</MinRes>
+          <Nk>120</Nk>
+          <Nm>160</Nm>
+          <Nstop>100</Nstop>
+          <betastp>0</betastp>
+          <resid>1e-08</resid>
+        </lanczosParams>
+        <evenEigen>false</evenEigen>
+      </irl>
+      <evalSave>eigen/eval/eval4444nv100a</evalSave>
+      <size>100</size>
+      <file>eigen/eig4444nv100a</file>
+      <multiFile>false</multiFile>
+    </epack>
+    <!-- Low Mode Average parameters -->
+    <lma>
+      <projector>false</projector>
+      <eigStart>0</eigStart>
+      <nEigs>-1</nEigs>
+    </lma>
+
+    <!-- Mixed Precision CG parameters -->
+    <mpcg>
+      <action>
+        <boundary>1 1 1 1</boundary>
+        <c1>1.0</c1>
+        <c2>1.0</c2>
+        <mass>0.002426</mass>
+        <tad>1.0</tad>
+        <twist>0 0 0</twist>
+      </action>
+      <maxInnerIteration>10000</maxInnerIteration>
+      <maxOuterIteration>10000</maxOuterIteration>
+      <residual>1e-08</residual>
+    </mpcg>
+
+    <!-- Gauge propagator parameters -->
+    <gaugeProp>
+      <source>noise_t0</source>
+      <solver>stag_ranLL_mass_l</solver>
+      <spinTaste>
+        <applyG5>true</applyG5>
+        <gammas>(G5 G5)</gammas>
+      </spinTaste>
+    </gaugeProp>
+
+    <!-- Contraction parameters -->
+    <corr>
+      <elem>
+        <quark>
+          <applyG5>true</applyG5>
+          <gammas>(GX G1) (GY G1) (GZ G1)</gammas>
+        </quark>
+        <sink>
+          <applyG5>true</applyG5>
+          <gammas>(GX G1) (GY G1) (GZ G1)</gammas>
+        </sink>
+        <antiquark>
+          <applyG5>true</applyG5>
+          <gammas>(G5 G5)</gammas>
+        </antiquark>
+        <amaOutput>e100n1dt1/correlators/m002426/vec_onelink/ama/corr_vec_onelink_ama_m002426</amaOutput>
+        <lmaOutput>e100n1dt1/correlators/m002426/vec_onelink/ranLL/corr_vec_onelink_ranLL_m002426</lmaOutput>
+      </elem>
+      <elem>
+        <quark>
+          <applyG5>true</applyG5>
+          <gammas>(GX GX) (GY GY) (GZ GZ)</gammas>
+        </quark>
+        <sink>
+          <applyG5>true</applyG5>
+          <gammas>(GX GX) (GY GY) (GZ GZ)</gammas>
+        </sink>
+        <antiquark>
+          <applyG5>true</applyG5>
+          <gammas>(G5 G5)</gammas>
+        </antiquark>
+        <amaOutput>e100n1dt1/correlators/m002426/vec_local/ama/corr_vec_local_ama_m002426</amaOutput>
+        <lmaOutput>e100n1dt1/correlators/m002426/vec_local/ranLL/corr_vec_local_ranLL_m002426</lmaOutput>
+      </elem>
+      <elem>
+        <quark>
+          <applyG5>true</applyG5>
+          <gammas>(G5 G5)</gammas>
+        </quark>
+        <sink>
+          <applyG5>true</applyG5>
+          <gammas>(G5 G5)</gammas>
+        </sink>
+        <antiquark>
+          <applyG5>true</applyG5>
+          <gammas>(G5 G5)</gammas>
+        </antiquark>
+        <amaOutput>e100n1dt1/correlators/m002426/pion_local/ama/corr_pion_local_ama_m002426</amaOutput>
+        <lmaOutput>e100n1dt1/correlators/m002426/pion_local/ranLL/corr_pion_local_ranLL_m002426</lmaOutput>
+      </elem>
+    </corr>
+
+    <!-- All-to-All Meson Field parameters -->
+    <a2a>
+      <action>
+        <boundary>1 1 1 1</boundary>
+        <c1>1.0</c1>
+        <c2>1.0</c2>
+        <mass>0.002426</mass>
+        <tad>1.0</tad>
+        <twist>0 0 0</twist>
+      </action>
+      <block>200</block>
+      <output>e100n1dt1/mesons/m002426/mf_a</output>
+      <spinTaste>
+        <applyG5>false</applyG5>
+        <!-- <gammas>(G1 G1) (GX GX) (GY GY) (GZ GZ) (G5 G5)</gammas> -->
+        <gammas>(G5 G5)</gammas>
+      </spinTaste>
+      <mom>
+        <elem>0 0 0</elem>
+      </mom>
+    </a2a>
+
+    <!-- Random wall sources -->
+    <!-- <sources> -->
+    <!--   <elem> -->
+    <!--     <tStep>4</tStep> -->
+    <!--     <t0>0</t0> -->
+    <!--     <nSrc>1</nSrc> -->
+    <!--     <seed>noise_t0</seed> -->
+    <!--   </elem> -->
+    <!--   <elem> -->
+    <!--     <tStep>4</tStep> -->
+    <!--     <t0>1</t0> -->
+    <!--     <nSrc>1</nSrc> -->
+    <!--     <seed>noise_t1</seed> -->
+    <!--   </elem> -->
+    <!--   <elem> -->
+    <!--     <tStep>4</tStep> -->
+    <!--     <t0>2</t0> -->
+    <!--     <nSrc>1</nSrc> -->
+    <!--     <seed>noise_t2</seed> -->
+    <!--   </elem> -->
+    <!--   <elem> -->
+    <!--     <tStep>4</tStep> -->
+    <!--     <t0>3</t0> -->
+    <!--     <nSrc>1</nSrc> -->
+    <!--     <seed>noise_t3</seed> -->
+    <!--   </elem> -->
+    <!-- </sources> -->
+    <runSeed>LMI-RW-series-a-100-eigs-1-noise</runSeed>
+  </parameters>
+</grid>

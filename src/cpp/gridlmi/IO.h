@@ -7,6 +7,38 @@
 
 NAMESPACE_BEGIN(Grid);
 
+// type aliases
+#define BASIC_TYPE_ALIASES(Impl, suffix)                                       \
+  typedef typename Impl::Field ScalarField##suffix;                            \
+  typedef typename Impl::PropagatorField PropagatorField##suffix;              \
+  typedef typename Impl::SitePropagator::scalar_object SitePropagator##suffix; \
+  typedef typename Impl::ComplexField ComplexField##suffix;                    \
+  typedef std::vector<SitePropagator##suffix> SlicedPropagator##suffix;        \
+  typedef std::vector<                                                         \
+      typename ComplexField##suffix::vector_object::scalar_object>             \
+      SlicedComplex##suffix;
+
+#define FERM_TYPE_ALIASES(FImpl, suffix)                                       \
+  BASIC_TYPE_ALIASES(FImpl, suffix);                                           \
+  typedef FermionOperator<FImpl> FMat##suffix;                                 \
+  typedef typename FImpl::FermionField FermionField##suffix;                   \
+  typedef typename FImpl::GaugeField GaugeField##suffix;                       \
+  typedef typename FImpl::DoubledGaugeField DoubledGaugeField##suffix;         \
+  typedef LinearOperatorBase<FermionField##suffix> FBaseOp##suffix;            \
+  typedef NonHermitianLinearOperator<FMat##suffix, FermionField##suffix>       \
+      FOp##suffix;                                                             \
+  typedef MdagMLinearOperator<FMat##suffix, FermionField##suffix>              \
+      FHermOp##suffix;                                                         \
+  typedef Lattice<iSpinMatrix<typename FImpl::Simd>> SpinMatrixField##suffix;  \
+  typedef Lattice<iColourVector<typename FImpl::Simd>>                         \
+      ColourVectorField##suffix;                                               \
+  typedef Lattice<iColourMatrix<typename FImpl::Simd>>                         \
+      ColourMatrixField##suffix;                                               \
+  typedef typename PropagatorField##suffix::vector_object::scalar_object       \
+      SpinColourMatrixScalar##suffix;                                          \
+  typedef Lattice<iSpinColourSpinColourMatrix<typename FImpl::Simd>>           \
+      SpinColourSpinColourMatrixField##suffix;
+
 #ifdef HAVE_HDF5
 typedef Hdf5Reader ResultReader;
 typedef Hdf5Writer ResultWriter;
@@ -18,56 +50,46 @@ typedef XmlWriter ResultWriter;
 // ============================================================================
 // MAction Module Parameter Classes
 // ============================================================================
-class ImprovedStaggeredMILCPar : Serializable {
+class ImprovedStaggeredPar : Serializable {
 public:
-  GRID_SERIALIZABLE_CLASS_MEMBERS(ImprovedStaggeredMILCPar, std::string,
-                                  gaugefat, std::string, gaugelong, double,
-                                  mass, double, c1, double, c2, double, tad,
-                                  std::string, boundary, std::string, twist);
+  GRID_SERIALIZABLE_CLASS_MEMBERS(ImprovedStaggeredPar, double, mass, double,
+                                  c1, double, c2, double, tad, std::string,
+                                  boundary, std::string, twist);
 
   std::string parString(void) const {
     XmlWriter writer("", "");
-    write(writer, "ImprovedStaggeredMILCPar", *this);
+    write(writer, "ImprovedStaggeredPar", *this);
     return writer.string();
   }
-};
-
-class GaugePropMILCPar : Serializable {
-public:
-  GRID_SERIALIZABLE_CLASS_MEMBERS(GaugePropMILCPar, std::string, source,
-                                  SpinTasteParams, spinTaste, std::string,
-                                  solver);
 };
 
 // ============================================================================
 // MSolver Module Parameter Classes
 // ============================================================================
-class ImplicitlyRestartedLanczosMILCPar : Serializable {
+class ImplicitlyRestartedLanczosPar : Serializable {
 public:
-  GRID_SERIALIZABLE_CLASS_MEMBERS(ImplicitlyRestartedLanczosMILCPar,
-                                  LanczosParams, lanczosParams, bool,
-                                  evenEigen);
+  GRID_SERIALIZABLE_CLASS_MEMBERS(ImplicitlyRestartedLanczosPar, LanczosParams,
+                                  lanczosParams);
 
   std::string parString(void) const {
     XmlWriter writer("", "");
-    write(writer, "ImplicitlyRestartedLanczosMILCPar", *this);
+    write(writer, "ImplicitlyRestartedLanczosPar", *this);
     return writer.string();
   }
 };
 
-class LowModeProjMILCPar : Serializable {
+class LowModeProjPar : Serializable {
 public:
-  GRID_SERIALIZABLE_CLASS_MEMBERS(LowModeProjMILCPar, ImprovedStaggeredMILCPar,
-                                  action, bool, projector, unsigned int,
-                                  eigStart, int, nEigs, std::string, lowModes);
+  GRID_SERIALIZABLE_CLASS_MEMBERS(LowModeProjPar, bool, projector, unsigned int,
+                                  eigStart, int, nEigs);
 };
 
-class MixedPrecisionCGMILCPar : Serializable {
+class MixedPrecisionCGPar : Serializable {
 public:
-  GRID_SERIALIZABLE_CLASS_MEMBERS(MixedPrecisionCGMILCPar,
-                                  ImprovedStaggeredMILCPar, action,
-                                  unsigned int, maxInnerIteration, unsigned int,
-                                  maxOuterIteration, double, residual);
+  GRID_SERIALIZABLE_CLASS_MEMBERS(MixedPrecisionCGPar, ImprovedStaggeredPar,
+                                  action, unsigned int, maxInnerIteration,
+                                  unsigned int, maxOuterIteration, double,
+                                  residual);
 };
 
 // ============================================================================
@@ -81,12 +103,12 @@ public:
 // ============================================================================
 // MSource Module Parameter Classes
 // ============================================================================
-class RandomWallMILCPar : Serializable {
+class RandomWallPar : Serializable {
 public:
-  GRID_SERIALIZABLE_CLASS_MEMBERS(RandomWallMILCPar, unsigned int, tStep,
+  GRID_SERIALIZABLE_CLASS_MEMBERS(RandomWallPar, unsigned int, tStep,
                                   unsigned int, t0, unsigned int, nSrc,
                                   std::string, seed);
-  RandomWallMILCPar() : seed("default_seed") {}
+  RandomWallPar() : seed("noise") {}
 };
 
 // ============================================================================
@@ -94,11 +116,10 @@ public:
 // ============================================================================
 class ContractionPar : Serializable {
 public:
-  GRID_SERIALIZABLE_ENUM(SolverType, undef, lma, 0, mpcg, 1);
-  GRID_SERIALIZABLE_CLASS_MEMBERS(ContractionPar, SolverType, solver,
-                                  SpinTasteParams, quark, SpinTasteParams,
-                                  antiquark, SpinTasteParams, sink, std::string,
-                                  output);
+  GRID_SERIALIZABLE_CLASS_MEMBERS(ContractionPar, SpinTasteParams, quark,
+                                  SpinTasteParams, antiquark, SpinTasteParams,
+                                  sink, std::string, lmaOutput, std::string,
+                                  amaOutput);
 };
 
 class MesonResult : Serializable {
@@ -110,11 +131,21 @@ public:
                                   Real, scaling);
 };
 
-class MesonFieldMILCPar : Serializable {
+class MesonFieldMetadata : Serializable {
 public:
-  GRID_SERIALIZABLE_CLASS_MEMBERS(MesonFieldMILCPar, int, block, std::string,
-                                  lowModes, std::string, left, std::string,
-                                  action, std::string, right, std::string,
+  GRID_SERIALIZABLE_CLASS_MEMBERS(MesonFieldMetadata, std::vector<RealF>,
+                                  momentum, StagGamma::StagAlgebra, gamma_spin,
+                                  StagGamma::StagAlgebra, gamma_taste);
+
+  MesonFieldMetadata()
+      : momentum{}, gamma_spin(StagGamma::StagAlgebra::undef),
+        gamma_taste(StagGamma::StagAlgebra::undef) {}
+};
+
+class MesonFieldPar : Serializable {
+public:
+  GRID_SERIALIZABLE_CLASS_MEMBERS(MesonFieldPar, int, block,
+                                  ImprovedStaggeredPar, action, std::string,
                                   output, SpinTasteParams, spinTaste,
                                   std::vector<std::string>, mom);
 };
@@ -133,39 +164,42 @@ public:
 
 class EpackPar : Serializable {
 public:
+  GRID_SERIALIZABLE_ENUM(CheckerType, undef, even, 0, odd, 1);
   GRID_SERIALIZABLE_ENUM(EpackType, undef, load, 0, solve, 1);
-  GRID_SERIALIZABLE_CLASS_MEMBERS(EpackPar, ImprovedStaggeredMILCPar, action,
-                                  ImplicitlyRestartedLanczosMILCPar, irl,
+  GRID_SERIALIZABLE_CLASS_MEMBERS(EpackPar, ImprovedStaggeredPar, action,
+                                  ImplicitlyRestartedLanczosPar, irl,
                                   std::string, evalSave, EpackType, type,
                                   unsigned int, size, std::string, file, bool,
-                                  multiFile);
+                                  multiFile, CheckerType, checker, std::string,
+                                  seed);
+  EpackPar() : seed("epack"), checker(CheckerType::odd) {}
 };
 
 class GlobalPar : Serializable {
 public:
   GRID_SERIALIZABLE_CLASS_MEMBERS(GlobalPar, GaugePar, gauge, EpackPar, epack,
-                                  LowModeProjMILCPar, lma,
-                                  MixedPrecisionCGMILCPar, mpcg,
-                                  GaugePropMILCPar, gaugeProp, ContractionPar,
-                                  corr, MesonFieldMILCPar, a2a,
-                                  std::vector<RandomWallMILCPar>, sources,
-                                  std::string, series, unsigned int,
-                                  trajectory);
+                                  LowModeProjPar, lma, MixedPrecisionCGPar,
+                                  mpcg, std::vector<ContractionPar>, corr,
+                                  MesonFieldPar, a2a,
+                                  std::vector<RandomWallPar>, sources,
+                                  std::string, series, std::string, runSeed,
+                                  unsigned int, trajectory);
 };
 
 int mkdir(const std::string dirName);
 std::string dirname(const std::string &s);
 void makeFileDir(const std::string filename, GridBase *g);
 std::string resultFilename(const std::string stem, const GlobalPar &inputParams,
-                           const std::string ext);
+                           const std::string ext, bool includeSeries);
+std::string getSeed(GlobalPar &inputParams, std::string seedSuffix = "");
 template <typename T>
 void saveResult(GridBase *grid, const std::string stem, const std::string name,
                 const T &result, const GlobalPar &inputParams,
-                const std::string ext = "h5") {
+                const std::string ext = "h5", bool includSeries = true) {
   if (grid->IsBoss() and !stem.empty()) {
     makeFileDir(stem, grid);
     {
-      ResultWriter writer(resultFilename(stem, inputParams, ext));
+      ResultWriter writer(resultFilename(stem, inputParams, ext, includSeries));
       write(writer, name, result);
     }
   }
@@ -173,9 +207,11 @@ void saveResult(GridBase *grid, const std::string stem, const std::string name,
 template <typename T>
 void saveResult(GridBase *grid, const std::string stem, const std::string name,
                 const T &result, const GlobalPar &inputParams,
-                const int tsource, const std::string ext = "h5") {
+                const int tsource, const std::string ext = "h5",
+                bool includeSeries = true) {
   std::string stem_with_tsource = stem + "_t" + std::to_string(tsource);
-  saveResult(grid, stem_with_tsource, name, result, inputParams, ext);
+  saveResult(grid, stem_with_tsource, name, result, inputParams, ext,
+             includeSeries);
 }
 
 NAMESPACE_END(Grid);

@@ -59,9 +59,14 @@ void makeFileDir(const std::string filename, GridBase *g) {
   }
 }
 std::string resultFilename(const std::string stem, const GlobalPar &inputParams,
-                           const std::string ext) {
-  return stem + "_" + inputParams.series + "." +
+                           const std::string ext, bool includeSeries) {
+  return stem + (includeSeries ? ("_" + inputParams.series) : "") + "." +
          std::to_string(inputParams.trajectory) + "." + ext;
+}
+
+std::string getSeed(GlobalPar &inputParams, std::string seedSuffix) {
+  return inputParams.runSeed + (seedSuffix.empty() ? "" : "-" + seedSuffix) +
+         "-" + std::to_string(inputParams.trajectory);
 }
 
 #undef MAX_PATH_LENGTH

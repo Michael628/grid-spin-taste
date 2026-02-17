@@ -1,7 +1,7 @@
 #pragma once
 
-#include <a2a/A2AView.h>
 #include <StagGamma.h>
+#include <a2a/A2AView.h>
 
 #ifndef MF_SUM_ARRAY_MAX
 #define MF_SUM_ARRAY_MAX 16
@@ -40,7 +40,7 @@ NAMESPACE_BEGIN(Grid);
   int sizeR = this->_right_view->size();                                       \
                                                                                \
   int orthogDir = this->_orthog_dir;                                           \
-  const int simdSize = this->_grid->Nsimd();                                   \
+  const size_t simdSize = this->_grid->Nsimd();                                \
   const int reducedOrthogDimSize = this->_grid->_rdimensions[orthogDir];       \
                                                                                \
   const int nBlocks = this->_grid->_slice_nblock[orthogDir];                   \
@@ -507,6 +507,7 @@ public:
 
       spinTaste.setSpinTaste(_gammas[mu]);
 
+      StagGamma::print(spinTaste);
       spinTaste.applyPhase(_phase[mu], temp); // store spin-taste phase
     }
     _phase_view->openViews(_phase.data(), nGamma);
@@ -534,8 +535,8 @@ public:
 
   virtual double getFlops() {
     // One complex multiply takes 6 floating point ops (4 mult, 2 add)
-    // --> complex inner product is 3 complex mult, 2 complex add = 3*6 + 2*2 =
-    // 22 double precision floating ops
+    // --> complex inner product is 3 complex mult, 2 complex add = 3*6 + 2*2
+    // = 22 double precision floating ops
 
     // For each vector and at each lattice site:
     //  - one inner product
