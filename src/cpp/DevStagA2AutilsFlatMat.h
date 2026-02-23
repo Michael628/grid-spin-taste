@@ -1,10 +1,9 @@
 #pragma once
 // #include <Grid/Hadrons/Global.hpp>
-#include <A2AView.h>
 #include <Grid/Grid_Eigen_Tensor.h>
 #include <SpatialTraceVector.h>
 #include <StagGamma.h>
-#include <nvtx3/nvToolsExt.h>
+#include <a2a/A2AView.h>
 #include <typeinfo>
 
 NAMESPACE_BEGIN(Grid);
@@ -160,73 +159,72 @@ void DevA2AutilsFlatMat<FImpl>::MesonField(
       rhs_view.openViews(&rhs_vj[jo], nrcache);
       auto rhs_v = rhs_view.getView();
 
-      nvtxRangePushA("Compute inner products");
+      {
+        GRID_TRACE("ComputeInnerProducts");
 
-      uint64_t Nxyz = nxyz;
-      uint32_t Nt = nt;
-      uint32_t Niprod = block * block; // Maximum size allocated
+        uint64_t Nxyz = nxyz;
+        uint32_t Nt = nt;
+        uint32_t Niprod = block * block; // Maximum size allocated
 
-      // take local inner product
-      // and Initialize BLAS_R
-      // Parallelize over all (ii, jj, os) combinations
-      uint64_t total_work = (uint64_t)nlcache * nrcache * osites;
+        // take local inner product
+        // and Initialize BLAS_R
+        // Parallelize over all (ii, jj, os) combinations
+        uint64_t total_work = (uint64_t)nlcache * nrcache * osites;
 
-      accelerator_for(work_idx, total_work, Nsimd, {
-        // Decompose flattened index into (ii, jj, os)
-        uint32_t os = work_idx % osites;
-        uint32_t jj = (work_idx / osites) % nrcache;
-        uint32_t ii = work_idx / (osites * nrcache);
+        accelerator_for(work_idx, total_work, Nsimd, {
+          // Decompose flattened index into (ii, jj, os)
+          uint32_t os = work_idx % osites;
+          uint32_t jj = (work_idx / osites) % nrcache;
+          uint32_t ii = work_idx / (osites * nrcache);
 
-        // Map from blas layout to grid lattice layout
-        auto lane = acceleratorSIMTlane(Nsimd);
-        auto lane_idx = lane * osites + os;
+          // Map from blas layout to grid lattice layout
+          auto lane = acceleratorSIMTlane(Nsimd);
+          auto lane_idx = lane * osites + os;
 
-        Scalar_v vv;
+          Scalar_v vv;
 
-        vv = innerProduct(coalescedRead(lhs_v[ii][os]),
-                          coalescedRead(rhs_v[jj][os]));
-        auto data = extractLane(lane, vv);
+          vv = innerProduct(coalescedRead(lhs_v[ii][os]),
+                            coalescedRead(rhs_v[jj][os]));
+          auto data = extractLane(lane, vv);
 
-        // HOISTED: Compute invariant terms and index
-        uint64_t word_offset = (ii * block + jj) * Nxyz;
-        uint64_t t_stride = Nxyz * Niprod;
-        uint64_t xyz = xyzMap_p[lane_idx];
-        uint64_t t = tMap_p[lane_idx];
-        uint64_t idx = xyz + word_offset + t * t_stride;
+          // HOISTED: Compute invariant terms and index
+          uint64_t word_offset = (ii * block + jj) * Nxyz;
+          uint64_t t_stride = Nxyz * Niprod;
+          uint64_t xyz = xyzMap_p[lane_idx];
+          uint64_t t = tMap_p[lane_idx];
+          uint64_t idx = xyz + word_offset + t * t_stride;
 
-        blas_ip[idx] = data;
-      });
-
-      nvtxRangePop();
+          blas_ip[idx] = data;
+        });
+      }
 
       rhs_view.closeViews();
 
-      nvtxRangePushA("SpatialTrace");
+      tracePush("SpatialTrace");
 
       std::vector<MatStag> trace_result;
       ST.Trace(trace_result);
+      tracePop("SpatialTrace");
 
-      nvtxRangePop();
+      {
+        GRID_TRACE("ExtractResults");
 
-      nvtxRangePushA("Extract results");
+        thread_for2d(mmom, Nmom * Ngamma, t, Nt, {
+          int m = mmom / Ngamma;
+          int mu = mmom % Ngamma;
+          int idx = mmom + Nmom * Ngamma * t;
 
-      thread_for2d(mmom, Nmom * Ngamma, t, Nt, {
-        int m = mmom / Ngamma;
-        int mu = mmom % Ngamma;
-        int idx = mmom + Nmom * Ngamma * t;
+          for (int i = io; i < MIN(Lblock, io + block); i++) {
+            int ii = i % block;
+            for (int j = jo; j < MIN(Rblock, jo + block); j++) {
+              int jj = j % block;
 
-        for (int i = io; i < MIN(Lblock, io + block); i++) {
-          int ii = i % block;
-          for (int j = jo; j < MIN(Rblock, jo + block); j++) {
-            int jj = j % block;
-
-            auto tmp = peekIndex<LorentzIndex>(trace_result[idx], ii, jj);
-            mat((long)m, mu, (long)t, i, j) = tmp()();
+              auto tmp = peekIndex<LorentzIndex>(trace_result[idx], ii, jj);
+              mat((long)m, mu, (long)t, i, j) = tmp()();
+            }
           }
-        }
-      });
-
-      nvtxRangePop();
+        });
+      }
 
     } // jo
 

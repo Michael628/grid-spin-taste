@@ -1,10 +1,9 @@
 #pragma once
 // #include <Grid/Hadrons/Global.hpp>
-#include <A2AView.h>
 #include <Grid/Grid_Eigen_Tensor.h>
 #include <SpatialTraceVector.h>
 #include <StagGamma.h>
-#include <nvtx3/nvToolsExt.h>
+#include <a2a/A2AView.h>
 #include <typeinfo>
 
 NAMESPACE_BEGIN(Grid);
@@ -148,67 +147,61 @@ void DevA2AutilsVector<FImpl>::MesonField(
     for (int i = 0; i < Lblock; i++) {
       autoView(lhs_v, lhs_wi[i], AcceleratorRead);
 
-      if (i == 0) {
-        nvtxRangePushA("inner_profile");
+      {
+        GRID_TRACE("localInner");
+
+        // take local inner product
+        // and Initialize BLAS_R
+        // Parallelize over all (ii, jj, os) combinations
+        uint64_t total_work = (uint64_t)nrcache * osites;
+
+        accelerator_for(work_idx, total_work, Nsimd, {
+          uint32_t os = work_idx % osites;
+          uint32_t jj = work_idx / osites;
+
+          // Map from blas layout to grid lattice layout
+          auto lane = acceleratorSIMTlane(Nsimd);
+          auto lane_idx = lane * osites + os;
+
+          Scalar_v vv;
+
+          vv = innerProduct(coalescedRead(lhs_v[os]),
+                            coalescedRead(rhs_v[jj][os]));
+          auto data = extractLane(lane, vv);
+
+          // HOISTED: Compute invariant terms and index
+          uint64_t word_offset = jj * nxyz;
+          uint64_t t_stride = nxyz * block;
+          uint64_t xyz = xyzMap_p[lane_idx];
+          uint64_t t = tMap_p[lane_idx];
+          uint64_t idx = xyz + word_offset + t * t_stride;
+
+          blas_ip[idx] = data;
+        });
       }
-      nvtxRangePushA("local Inner");
 
-      // take local inner product
-      // and Initialize BLAS_R
-      // Parallelize over all (ii, jj, os) combinations
-      uint64_t total_work = (uint64_t)nrcache * osites;
-
-      accelerator_for(work_idx, total_work, Nsimd, {
-        uint32_t os = work_idx % osites;
-        uint32_t jj = work_idx / osites;
-
-        // Map from blas layout to grid lattice layout
-        auto lane = acceleratorSIMTlane(Nsimd);
-        auto lane_idx = lane * osites + os;
-
-        Scalar_v vv;
-
-        vv = innerProduct(coalescedRead(lhs_v[os]),
-                          coalescedRead(rhs_v[jj][os]));
-        auto data = extractLane(lane, vv);
-
-        // HOISTED: Compute invariant terms and index
-        uint64_t word_offset = jj * nxyz;
-        uint64_t t_stride = nxyz * block;
-        uint64_t xyz = xyzMap_p[lane_idx];
-        uint64_t t = tMap_p[lane_idx];
-        uint64_t idx = xyz + word_offset + t * t_stride;
-
-        blas_ip[idx] = data;
-      });
-
-      nvtxRangePop();
-
-      if (i == 0) {
-        nvtxRangePop();
-      }
-      nvtxRangePushA("SpatialTrace");
+      tracePush("SpatialTrace");
 
       std::vector<VecStag> trace_result;
       ST.Trace(trace_result);
+      tracePop("SpatialTrace");
+      {
 
-      nvtxRangePop();
+        GRID_TRACE("ExtractResults");
 
-      nvtxRangePushA("Extract results");
+        thread_for2d(mmom, Nmom * Ngamma, t, nt, {
+          int m = mmom / Ngamma;
+          int mu = mmom % Ngamma;
+          int idx = mmom + Nmom * Ngamma * t;
 
-      thread_for2d(mmom, Nmom * Ngamma, t, nt, {
-        int m = mmom / Ngamma;
-        int mu = mmom % Ngamma;
-        int idx = mmom + Nmom * Ngamma * t;
+          for (int j = jo; j < MIN(Rblock, jo + block); j++) {
+            int jj = j % block;
 
-        for (int j = jo; j < MIN(Rblock, jo + block); j++) {
-          int jj = j % block;
-
-          auto tmp = peekIndex<LorentzIndex>(trace_result[idx], jj);
-          mat((long)m, mu, (long)t, i, j) = tmp()();
-        }
-      });
-      nvtxRangePop();
+            auto tmp = peekIndex<LorentzIndex>(trace_result[idx], jj);
+            mat((long)m, mu, (long)t, i, j) = tmp()();
+          }
+        });
+      }
     } // i
 
     rhs_view.closeViews();

@@ -1,6 +1,5 @@
 #pragma once
 
-#include <Grid/Grid_Eigen_Tensor.h>
 #include <StagGamma.h>
 #include <a2a/A2AView.h>
 
@@ -9,8 +8,6 @@
 #endif
 
 NAMESPACE_BEGIN(Grid);
-
-#undef DELTA_F_EQ_2
 
 #define A2A_TYPEDEFS                                                           \
   typedef typename FImpl::SiteSpinor vobj;                                     \
@@ -43,7 +40,7 @@ NAMESPACE_BEGIN(Grid);
   int sizeR = this->_right_view->size();                                       \
                                                                                \
   int orthogDir = this->_orthog_dir;                                           \
-  const int simdSize = this->_grid->Nsimd();                                   \
+  const size_t simdSize = this->_grid->Nsimd();                                \
   const int reducedOrthogDimSize = this->_grid->_rdimensions[orthogDir];       \
                                                                                \
   const int nBlocks = this->_grid->_slice_nblock[orthogDir];                   \
@@ -113,8 +110,8 @@ public:
 
   virtual double getFlops() = 0;
 
+  // Populates `_o_coor_map` property with full grid indices
   void generateCoorMap() {
-    /* Populates `_o_coor_map` property with full grid indices */
 
     assert(_grid->CheckerBoarded(_orthog_dir) != 1);
 
@@ -146,16 +143,14 @@ public:
     }
   }
 
+  // Updates object to compute meson field with new `left` vectors
+  // Updated properties:
+  // `_contract_type` - Updated to reflect `left` checkerboard state
+  // `_left_view`     - Allocates views from `left` pointer parameter
+  // `_grid`          - Sets to checkerboarded grid if `_left_view`
+  //                    or `_right_view` are checkerboarded, otherwise set to
+  //                    full grid
   virtual void setLeft(const FermionField *left, int size) {
-    /*
-     * Updates object to compute meson field with new `left` vectors
-     * Updated properties:
-     * `_contract_type` - Updated to reflect `left` checkerboard state
-     * `_left_view`     - Allocates views from `left` pointer parameter
-     * `_grid`          - Sets to checkerboarded grid if `_left_view`
-     *                    or `_right_view` are checkerboarded, otherwise set to
-     *                    full grid
-     */
 
     bool checkerL = left[0].Grid()->_isCheckerBoarded;
 
@@ -287,18 +282,12 @@ public:
 
       int nGammaBlock = std::min(nGamma - mu, MF_SUM_ARRAY_MAX);
 
-      {
-        GRID_TRACE("vectorSum");
-        vectorSum(shm_p + mu * gammaStride, mu, nGammaBlock);
-      }
+      vectorSum(shm_p + mu * gammaStride, mu, nGammaBlock);
     }
 
-    {
-      GRID_TRACE("simdSum");
-      for (int mu = 0; mu < nGamma; mu++) {
-        simdSum(result_p + mu * multFact * sizeR * sizeL * Nt,
-                shm_p + mu * gammaStride);
-      }
+    for (int mu = 0; mu < nGamma; mu++) {
+      simdSum(result_p + mu * multFact * sizeR * sizeL * Nt,
+              shm_p + mu * gammaStride);
     }
 
     acceleratorFreeDevice(shm_p);
@@ -518,6 +507,7 @@ public:
 
       spinTaste.setSpinTaste(_gammas[mu]);
 
+      StagGamma::print(spinTaste);
       spinTaste.applyPhase(_phase[mu], temp); // store spin-taste phase
     }
     _phase_view->openViews(_phase.data(), nGamma);
@@ -545,8 +535,8 @@ public:
 
   virtual double getFlops() {
     // One complex multiply takes 6 floating point ops (4 mult, 2 add)
-    // --> complex inner product is 3 complex mult, 2 complex add = 3*6 + 2*2 =
-    // 22 double precision floating ops
+    // --> complex inner product is 3 complex mult, 2 complex add = 3*6 + 2*2
+    // = 22 double precision floating ops
 
     // For each vector and at each lattice site:
     //  - one inner product
@@ -699,166 +689,444 @@ public:
   }
 };
 
-template <typename FImpl> class A2AWorkerBase {
+template <typename FImpl> class A2ATaskOnelink : public A2ATaskBase<FImpl> {
 public:
-  typedef typename FImpl::ComplexField ComplexField;
-  typedef typename FImpl::FermionField FermionField;
-  typedef typename FImpl::SiteSpinor vobj;
-  typedef typename vobj::scalar_type scalar_type;
+  A2A_TYPEDEFS;
 
-public:
-  GridBase *_grid, *_cb_grid;
+protected:
+  const std::vector<StagGamma::SpinTastePair> &_gammas = {};
+  std::vector<int> _shift_dirs, _shift_displacements;
+  LatticeGaugeField *_U;
 
-  double _flops, _t_kernel, _t_gsum;
-
-  A2ATaskBase<FImpl> *_task_e, *_task_o;
-
-  const FermionField *_l_addr, *_r_addr;
-
-  scalar_type *_cache_device;
-  size_t _cache_bytes = 0;
-
-  bool _odd_shifts{false};
+  std::vector<LatticeColourMatrix> _link, _link_shifted;
+  std::shared_ptr<A2AFieldView<vColourMatrix>> _link_view, _link_shifted_view;
+  std::shared_ptr<A2AStencilView<vobj, FImplParams>> _right_stencil_view;
 
 public:
-  A2AWorkerBase() = delete;
-  A2AWorkerBase(GridBase *grid)
-      : _grid(grid), _l_addr(nullptr), _r_addr(nullptr) {}
-
-  virtual ~A2AWorkerBase() {
-    if (_cache_bytes != 0) {
-      acceleratorFreeDevice(_cache_device);
-    }
-    delete _task_e;
-    delete _task_o;
-  }
-
-public:
-  template <typename TensorType> // output: rank 5 tensor, e.g.
-                                 // Eigen::Tensor<ComplexD, 5>
-  void StagMesonField(TensorType &mat, const FermionField *lhs_wi_E,
-                      const FermionField *lhs_wi_O,
-                      const FermionField *rhs_vj_E,
-                      const FermionField *rhs_vj_O) {
-    if (_cache_bytes < mat.size() * sizeof(scalar_type)) {
-      if (_cache_bytes != 0) {
-        acceleratorFreeDevice(_cache_device);
-      }
-      _cache_bytes = mat.size() * sizeof(scalar_type);
-      std::cout << GridLogPerformance << "cache bytes: " << _cache_bytes
-                << std::endl;
-      _cache_device = (scalar_type *)acceleratorAllocDevice(_cache_bytes);
-    }
-
-    int sizeL = mat.dimension(3);
-    int sizeR = mat.dimension(4);
-    bool checkerL = lhs_wi_E[0].Grid()->_isCheckerBoarded;
-    bool checkerR = rhs_vj_E[0].Grid()->_isCheckerBoarded;
-
-    if (checkerL)
-      sizeL /= 2;
-    if (checkerR)
-      sizeR /= 2;
-
-    // scalar_type *matDevice = _cache_device;
-    scalar_type *matDevice = mat.data();
-
-    {
-      GRID_TRACE("setLeft");
-      if (_l_addr != lhs_wi_E) {
-        _l_addr = lhs_wi_E;
-
-        _task_e->setLeft(lhs_wi_E, sizeL);
-        if (checkerL)
-          _task_o->setLeft(lhs_wi_O, sizeL);
-        else if (checkerR)
-          _task_o->setLeft(*_task_e);
-      }
-    }
-    {
-
-      GRID_TRACE("setRight");
-      if (_r_addr != rhs_vj_E) {
-        _r_addr = rhs_vj_E;
-
-        if (checkerR) {
-          if (_odd_shifts) {
-            _task_e->setRight(rhs_vj_O, sizeR);
-            _task_o->setRight(rhs_vj_E, sizeR);
-          } else {
-            _task_e->setRight(rhs_vj_E, sizeR);
-            _task_o->setRight(rhs_vj_O, sizeR);
-          }
-        } else {
-          _task_e->setRight(rhs_vj_E, sizeR);
-          if (checkerL) {
-            _task_o->setRight(*_task_e);
-          }
-        }
-      }
-    }
-
-    {
-      GRID_TRACE("Sum: Total");
-      {
-        GRID_TRACE("Sum: Kernel");
-        _t_kernel = -usecond();
-        if (!(checkerL || checkerR)) {
-          _task_e->execute(matDevice);
-        } else {
-          _task_e->execute(matDevice);
-          _task_o->execute(matDevice);
-        }
-      }
-
-      setFlops(_task_e->getFlops());
-      _t_kernel += usecond();
-
-      int resultStride = mat.dimension(2) * mat.dimension(3) * mat.dimension(4);
-      int nGamma = mat.dimension(0) * mat.dimension(1);
-
-      // auto matHost = mat.data();
-      // size_t matBytes = mat.size()*sizeof(scalar_type);
-      // acceleratorCopyFromDevice(matDevice,matHost,matBytes);
-
-      {
-        GRID_TRACE("Sum: Global");
-        _t_gsum = -usecond();
-        int comm_batch = std::pow(2, 20);
-        int offset = 0;
-        int buff = comm_batch;
-
-        this->_grid->GlobalSumVector(matDevice, nGamma * resultStride);
-        _t_gsum += usecond();
-      }
-    }
-  }
-  void setFlops(double flops) { _flops = flops; }
-  double getFlops() { return _flops; }
-};
-
-template <typename FImpl> class A2AWorkerLocal : public A2AWorkerBase<FImpl> {
-public:
-  typedef typename FImpl::ComplexField ComplexField;
-  typedef typename FImpl::FermionField FermionField;
-  typedef typename FImpl::SiteSpinor vobj;
-  typedef typename vobj::scalar_type scalar_type;
-
-public:
-  A2AWorkerLocal() = delete;
-  A2AWorkerLocal(GridBase *grid, const std::vector<ComplexField> &mom,
+  A2ATaskOnelink(GridBase *grid, int orthogDir,
                  const std::vector<StagGamma::SpinTastePair> &gammas,
-                 int orthogDir)
-      : A2AWorkerBase<FImpl>(grid) {
-    this->_odd_shifts = false;
-    if (mom.size()) {
-      assert(0);
-    } else {
-      this->_task_e = new A2ATaskLocal<FImpl>(grid, orthogDir, gammas, Even);
-      this->_task_o = new A2ATaskLocal<FImpl>(
-          grid, orthogDir, dynamic_cast<A2ATaskLocal<FImpl> &>(*this->_task_e),
-          gammas, Odd);
+                 int cb = Even)
+      : A2ATaskBase<FImpl>(grid, orthogDir, cb), _gammas(gammas) {
+
+    this->_odd_shifts = true;
+
+    StagGamma spinTaste;
+
+    for (int i = 0; i < _gammas.size(); i++) {
+
+      spinTaste.setSpinTaste(_gammas[i]);
+
+      int shift = (spinTaste._spin ^ spinTaste._taste);
+      // Assume 1-link for now -- break loop when you find a shift direction
+      for (int j = 0; j < StagGamma::gmu.size(); j++) {
+        if (StagGamma::gmu[j] & shift) {
+          _shift_dirs.push_back(j);
+          _shift_dirs.push_back(j);
+          _shift_displacements.push_back(1);
+          _shift_displacements.push_back(-1);
+          break;
+        }
+      }
     }
+  }
+
+  A2ATaskOnelink(GridBase *grid, int orthogDir, A2ATaskOnelink<FImpl> &other,
+                 const std::vector<StagGamma::SpinTastePair> &gammas,
+                 LatticeGaugeField *U, int cb = Even)
+      : A2ATaskOnelink<FImpl>(grid, orthogDir, gammas, cb) {
+    _U = U;
+    _link_view = other.getLinkView();
+    _link_shifted_view = other.getLinkView(true);
+  }
+
+  A2ATaskOnelink(GridBase *grid, int orthogDir,
+                 const std::vector<StagGamma::SpinTastePair> &gammas,
+                 LatticeGaugeField *U, int cb = Even)
+      : A2ATaskOnelink<FImpl>(grid, orthogDir, gammas, cb) {
+
+    _U = U;
+
+    double t0 = usecond();
+
+    int nGamma = _gammas.size();
+
+    _link.resize(nGamma, _U->Grid());
+    _link_shifted.resize(nGamma, _U->Grid());
+
+    StagGamma spinTaste;
+
+    for (int i = 0; i < nGamma; i++) {
+
+      spinTaste.setSpinTaste(_gammas[i]);
+
+      _link[i] = PeekIndex<LorentzIndex>(
+          *_U,
+          _shift_dirs[2 * i]); // Store full lattice links in shift direction
+
+      _link_shifted[i] = Cshift(_link[i], _shift_dirs[2 * i], -1);
+
+      spinTaste.applyPhase(_link[i], _link[i]); // store spin-taste phase
+      spinTaste.applyPhase(_link_shifted[i],
+                           _link_shifted[i]); // store spin-taste phase
+    }
+    _link_view = std::make_shared<A2AFieldView<vColourMatrix>>();
+    _link_shifted_view = std::make_shared<A2AFieldView<vColourMatrix>>();
+
+    _link_view->openViews(_link.data(), nGamma);
+    _link_shifted_view->openViews(_link_shifted.data(), nGamma);
+
+    double t1 = usecond();
+    std::cout << GridLogPerformance
+              << " MesonField onelink timings: build link fields + comms: "
+              << (t1 - t0) / 1000 << " ms" << std::endl;
+  }
+
+  // Updates object to compute meson field with new `right` vectors.
+  // See corresponding `setLeft` method.
+  virtual void setRight(const FermionField *right, int size) {
+
+    bool checkerR = right[0].Grid()->_isCheckerBoarded;
+
+    // Toggle RightHalf bit
+    if (this->_contract_type == ContractType::undef) {
+      this->_contract_type =
+          checkerR ? ContractType::RightHalf : ContractType::Full;
+    } else {
+      if (checkerR)
+        this->_contract_type = this->_contract_type | ContractType::RightHalf;
+      else
+        this->_contract_type = this->_contract_type & ContractType::LeftHalf;
+    }
+
+    int cb = (this->_cb_left == Odd) ? Even : Odd;
+
+    switch (this->_contract_type) {
+    case ContractType::Full:
+      cb = Even;
+    case ContractType::BothHalf:
+    case ContractType::RightHalf:
+      this->_grid = right[0].Grid();
+      break;
+    case ContractType::LeftHalf:
+      cb = Even;
+    default:
+      break;
+    }
+
+    if (checkerR)
+      this->generateCoorMap();
+
+    auto ptr = std::make_unique<FermStencil>(
+        this->_grid, _shift_dirs.size(), cb, _shift_dirs, _shift_displacements);
+
+    _right_stencil_view = std::make_shared<A2AStencilView<vobj, FImplParams>>();
+
+    _right_stencil_view->addStencil(ptr);
+    _right_stencil_view->openViews(right, size);
+
+    this->_right_view = std::make_shared<A2AFieldView<vobj>>();
+    this->_right_view->openViews(right, size);
+  }
+
+  virtual void setRight(A2ATaskBase<FImpl> &other) {
+    assert(!(other.getType() & ContractType::RightHalf));
+    this->_right_view = other.getRightView();
+    _right_stencil_view =
+        dynamic_cast<A2ATaskOnelink<FImpl> &>(other).getRightStencilView();
+
+    this->_contract_type = other.getType();
+  }
+
+  virtual ~A2ATaskOnelink() {
+    if (_right_stencil_view)
+      _right_stencil_view->closeViews();
+    if (_link_view)
+      _link_view->closeViews();
+    if (_link_shifted_view)
+      _link_shifted_view->closeViews();
+  }
+
+  std::shared_ptr<A2AStencilView<vobj, FImplParams>> getRightStencilView() {
+    return _right_stencil_view;
+  }
+
+  std::shared_ptr<A2AFieldView<vColourMatrix>>
+  getLinkView(bool shifted = false) {
+    if (shifted)
+      return _link_shifted_view;
+    else
+      return _link_view;
+  }
+
+  virtual int getNgamma() { return _link_view->size(); }
+
+  virtual double getFlops() {
+    // matrix*vector = 3 inner products
+    // current code:
+    // innerProduct(left,link_ahead*shift_ahead+adj(link_behind)*shift_behind)
+    //  = matrix*vector + matrix* vector --> inner product = 7 inner products
+    //  and 1 complex sum
+
+    // For each vector, each gamma, and at each lattice site:
+    //  - one inner product
+    //  - two su(3) matrix*vector ops
+    //  - one complex sum
+    return ((7 * 22.0 + 2.0) * this->getNgamma());
+  }
+
+  virtual void vectorSumHalf(cobj *shm_p, int mu_offset, int N) {
+
+    COMMON_VARS;
+
+    assert(orthogDir ==
+           Tdir); // This kernel assumes lattice is coalesced over time slices
+    assert(nBlocks == 1);
+
+    // Pointers for accelerator indexing
+    GaugeView *viewGL_p = this->_link_view->getView() + mu_offset;
+    GaugeView *viewGR_p = this->_link_shifted_view->getView() + mu_offset;
+
+    FermStencilView *stencilR_p =
+        this->_right_stencil_view->getView(); // ket stencil for shifted links
+    vobj *bufRight_p =
+        this->_right_stencil_view
+            ->getBuffer(); // buffer for shifted kets in halo region
+
+    int haloBuffRightSize = this->_right_stencil_view->getOffset(1);
+
+    int gammaStride = sizeR * sizeL * reducedOrthogDimSize;
+    int nGamma = N;
+
+    accelerator_for2d(l_index, sizeL, r_index, sizeR, simdSize, {
+      calcColourMatrix link_ahead, link_behind;
+      calcSpinor left, shift_ahead, shift_behind;
+      calcScalar sum[MF_SUM_ARRAY_MAX];
+
+      StencilEntry *SE;
+      int ptype, ss;
+      int shmem_base = reducedOrthogDimSize * (l_index + sizeL * r_index);
+
+      for (int rt = 0; rt < reducedOrthogDimSize; rt++) {
+
+        for (int mu = 0; mu < nGamma; mu++) {
+          sum[mu] = Zero();
+        }
+
+        for (int so = 0; so < localSpatialVolume; so++) {
+          ss = rt * localSpatialVolume + so;
+
+          left = coalescedRead(viewL_p[l_index][ss]);
+
+          for (int mu = 0; mu < nGamma; mu++) {
+            int rightShiftOffset = 2 * (mu + mu_offset);
+            link_ahead = coalescedRead(viewGL_p[mu][ocoor_p[ss]]);
+
+            SE = stencilR_p->GetEntry(ptype, rightShiftOffset, ss);
+            if (SE->_is_local) {
+              shift_ahead = coalescedReadPermute(viewR_p[r_index][SE->_offset],
+                                                 ptype, SE->_permute);
+            } else {
+              shift_ahead = coalescedRead(
+                  bufRight_p[r_index * haloBuffRightSize + SE->_offset]);
+            }
+            acceleratorSynchronise();
+
+            SE = stencilR_p->GetEntry(ptype, rightShiftOffset + 1, ss);
+            if (SE->_is_local) {
+              shift_behind = coalescedReadPermute(viewR_p[r_index][SE->_offset],
+                                                  ptype, SE->_permute);
+            } else {
+              shift_behind = coalescedRead(
+                  bufRight_p[r_index * haloBuffRightSize + SE->_offset]);
+            }
+            acceleratorSynchronise();
+
+            link_behind = adj(coalescedRead(viewGR_p[mu][ocoor_p[ss]]));
+
+            sum[mu] += innerProduct(left, link_ahead * shift_ahead +
+                                              link_behind * shift_behind);
+          }
+          for (int mu = 0; mu < nGamma; mu++) {
+            int shmem_idx = rt + shmem_base + mu * gammaStride;
+            coalescedWrite(shm_p[shmem_idx], sum[mu]);
+          }
+        }
+      }
+    });
+  }
+
+  virtual void vectorSumFull(cobj *shm_p, int mu_offset, int N) {
+
+    COMMON_VARS;
+
+    assert(orthogDir ==
+           Tdir); // This kernel assumes lattice is coalesced over time slices
+    assert(nBlocks == 1);
+
+    // Pointers for accelerator indexing
+    GaugeView *viewGL_p = this->_link_view->getView() + mu_offset;
+    GaugeView *viewGR_p = this->_link_shifted_view->getView() + mu_offset;
+
+    FermStencilView *stencilR_p =
+        this->_right_stencil_view->getView(); // ket stencil for shifted links
+    vobj *bufRight_p =
+        this->_right_stencil_view
+            ->getBuffer(); // buffer for shifted kets in halo region
+
+    int haloBuffRightSize = this->_right_stencil_view->getOffset(1);
+
+    int gammaStride = sizeR * sizeL * reducedOrthogDimSize;
+    int nGamma = N;
+
+    accelerator_for2d(l_index, sizeL, r_index, sizeR, simdSize, {
+      calcColourMatrix link_ahead, link_behind;
+      calcSpinor left, shift_ahead, shift_behind;
+      calcScalar sum[MF_SUM_ARRAY_MAX];
+
+      StencilEntry *SE;
+      int ptype, ss;
+      int shmem_base = reducedOrthogDimSize * (l_index + sizeL * r_index);
+
+      for (int rt = 0; rt < reducedOrthogDimSize; rt++) {
+
+        for (int mu = 0; mu < nGamma; mu++) {
+          sum[mu] = Zero();
+        }
+
+        for (int so = 0; so < localSpatialVolume; so++) {
+          ss = rt * localSpatialVolume + so;
+
+          left = coalescedRead(viewL_p[l_index][ss]);
+
+          for (int mu = 0; mu < nGamma; mu++) {
+            int rightShiftOffset = 2 * (mu + mu_offset);
+            link_ahead = coalescedRead(viewGL_p[mu][ss]);
+
+            SE = stencilR_p->GetEntry(ptype, rightShiftOffset, ss);
+            if (SE->_is_local) {
+              shift_ahead = coalescedReadPermute(viewR_p[r_index][SE->_offset],
+                                                 ptype, SE->_permute);
+            } else {
+              shift_ahead = coalescedRead(
+                  bufRight_p[r_index * haloBuffRightSize + SE->_offset]);
+            }
+            acceleratorSynchronise();
+
+            SE = stencilR_p->GetEntry(ptype, rightShiftOffset + 1, ss);
+            if (SE->_is_local) {
+              shift_behind = coalescedReadPermute(viewR_p[r_index][SE->_offset],
+                                                  ptype, SE->_permute);
+            } else {
+              shift_behind = coalescedRead(
+                  bufRight_p[r_index * haloBuffRightSize + SE->_offset]);
+            }
+            acceleratorSynchronise();
+
+            link_behind = adj(coalescedRead(viewGR_p[mu][ss]));
+
+            sum[mu] += innerProduct(left, link_ahead * shift_ahead +
+                                              link_behind * shift_behind);
+          }
+          for (int mu = 0; mu < nGamma; mu++) {
+            int shmem_idx = rt + shmem_base + mu * gammaStride;
+            coalescedWrite(shm_p[shmem_idx], sum[mu]);
+          }
+        }
+      }
+    });
+  }
+
+  virtual void vectorSumMixed(cobj *shm_p, int mu_offset, int N) {
+
+    COMMON_VARS;
+
+    assert(orthogDir ==
+           Tdir); // This kernel assumes lattice is coalesced over time slices
+    assert(nBlocks == 1);
+
+    // Pointers for accelerator indexing
+    GaugeView *viewGL_p = this->_link_view->getView() + mu_offset;
+    GaugeView *viewGR_p = this->_link_shifted_view->getView() + mu_offset;
+
+    FermStencilView *stencilR_p =
+        this->_right_stencil_view->getView(); // ket stencil for shifted links
+    vobj *bufRight_p =
+        this->_right_stencil_view
+            ->getBuffer(); // buffer for shifted kets in halo region
+
+    int haloBuffRightSize = this->_right_stencil_view->getOffset(1);
+
+    int gammaStride = sizeR * sizeL * reducedOrthogDimSize;
+    int nGamma = N;
+
+    bool checkerL = this->_contract_type == ContractType::LeftHalf;
+
+    accelerator_for2d(l_index, sizeL, r_index, sizeR, simdSize, {
+      calcColourMatrix link_ahead, link_behind;
+      calcSpinor left, shift_ahead, shift_behind;
+      calcScalar sum[MF_SUM_ARRAY_MAX];
+
+      StencilEntry *SE;
+      int ptype, ss, ss_left, ss_right, ss_link;
+      int shmem_base = reducedOrthogDimSize * (l_index + sizeL * r_index);
+
+      for (int rt = 0; rt < reducedOrthogDimSize; rt++) {
+
+        for (int mu = 0; mu < nGamma; mu++) {
+          sum[mu] = Zero();
+        }
+
+        for (int so = 0; so < localSpatialVolume; so++) {
+          ss = rt * localSpatialVolume + so;
+
+          ss_link = ocoor_p[ss];
+          if (checkerL) {
+            ss_left = ss;
+            ss_right = ss_link;
+          } else {
+            ss_left = ss_link;
+            ss_right = ss;
+          }
+          acceleratorSynchronise();
+
+          left = coalescedRead(viewL_p[l_index][ss_left]);
+
+          for (int mu = 0; mu < nGamma; mu++) {
+            int rightShiftOffset = 2 * (mu + mu_offset);
+            link_ahead = coalescedRead(viewGL_p[mu][ss_link]);
+
+            SE = stencilR_p->GetEntry(ptype, rightShiftOffset, ss_right);
+            if (SE->_is_local) {
+              shift_ahead = coalescedReadPermute(viewR_p[r_index][SE->_offset],
+                                                 ptype, SE->_permute);
+            } else {
+              shift_ahead = coalescedRead(
+                  bufRight_p[r_index * haloBuffRightSize + SE->_offset]);
+            }
+            acceleratorSynchronise();
+
+            SE = stencilR_p->GetEntry(ptype, rightShiftOffset + 1, ss_right);
+            if (SE->_is_local) {
+              shift_behind = coalescedReadPermute(viewR_p[r_index][SE->_offset],
+                                                  ptype, SE->_permute);
+            } else {
+              shift_behind = coalescedRead(
+                  bufRight_p[r_index * haloBuffRightSize + SE->_offset]);
+            }
+            acceleratorSynchronise();
+
+            link_behind = adj(coalescedRead(viewGR_p[mu][ss_link]));
+
+            sum[mu] += innerProduct(left, link_ahead * shift_ahead +
+                                              link_behind * shift_behind);
+          }
+          for (int mu = 0; mu < nGamma; mu++) {
+            int shmem_idx = rt + shmem_base + mu * gammaStride;
+            coalescedWrite(shm_p[shmem_idx], sum[mu]);
+          }
+        }
+      }
+    });
   }
 };
 #undef A2A_TYPEDEFS

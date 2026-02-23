@@ -27,7 +27,6 @@ directory
 *************************************************************************************/
 /*  END LEGAL */
 #pragma once
-#include <nvtx3/nvToolsExt.h>
 
 NAMESPACE_BEGIN(Grid);
 /*

@@ -1,10 +1,9 @@
 #pragma once
 // #include <Grid/Hadrons/Global.hpp>
-#include <A2AView.h>
 #include <Grid/Grid_Eigen_Tensor.h>
 #include <MomentumProject.h>
 #include <StagGamma.h>
-#include <nvtx3/nvToolsExt.h>
+#include <a2a/A2AView.h>
 
 NAMESPACE_BEGIN(Grid);
 
@@ -163,37 +162,40 @@ void DevA2AutilsBuggy<FImpl>::MesonField(
       rhs_view.openViews(&rhs_vj[jo], MIN(Rblock - jo, block));
       auto rhs_v = rhs_view.getView();
 
-      nvtxRangePushA("local Inner");
-      accelerator_for(ss, grid->oSites(), (size_t)Nsimd, {
-        auto left = lhs_v(ss);
-        auto vv = spinMat_v(ss);
-        for (int j = 0; j < MIN(Rblock - jo, block); j++) {
-          auto right = rhs_v[j](ss);
-          vv(j)()() = innerProduct(left, right)()()();
-        }
-        coalescedWrite(spinMat_v[ss], vv);
-      });
-      nvtxRangePop();
+      {
+        GRID_TRACE("localInner");
+        accelerator_for(ss, grid->oSites(), (size_t)Nsimd, {
+          auto left = lhs_v(ss);
+          auto vv = spinMat_v(ss);
+          for (int j = 0; j < MIN(Rblock - jo, block); j++) {
+            auto right = rhs_v[j](ss);
+            vv(j)()() = innerProduct(left, right)()()();
+          }
+          coalescedWrite(spinMat_v[ss], vv);
+        });
+      }
 
       rhs_view.closeViews();
 
       assert(orthogdim == Nd - 1);
-      nvtxRangePushA("spatial trace");
-      MP.Project(spinMat, sliced);
-      nvtxRangePop();
+      {
+        GRID_TRACE("spatialTrace");
+        MP.Project(spinMat, sliced);
+      }
 
-      nvtxRangePushA("Extract results");
-      thread_for2d(mmom, Nmom * Ngamma, t, Nt, {
-        int m = mmom / Ngamma;
-        int mu = mmom % Ngamma;
-        int idx = t + mmom * Nt;
-        for (int j = jo; j < MIN(Rblock, jo + block); j++) {
-          int jj = j % block;
-          auto tmp = peekIndex<LorentzIndex>(sliced[idx], jj);
-          mat((long)m, mu, (long)t, i, j) = tmp()();
-        }
-      });
-      nvtxRangePop();
+      {
+        GRID_TRACE("ExtractResults");
+        thread_for2d(mmom, Nmom * Ngamma, t, Nt, {
+          int m = mmom / Ngamma;
+          int mu = mmom % Ngamma;
+          int idx = t + mmom * Nt;
+          for (int j = jo; j < MIN(Rblock, jo + block); j++) {
+            int jj = j % block;
+            auto tmp = peekIndex<LorentzIndex>(sliced[idx], jj);
+            mat((long)m, mu, (long)t, i, j) = tmp()();
+          }
+        });
+      }
     } // jo
   }
 }

@@ -35,7 +35,6 @@ directory
 #include <DevStagA2AutilsVector.h>
 #include <StagGamma.h>
 // #include <cuda_profiler_api.h>
-#include <nvtx3/nvToolsExt.h>
 // clang-format on
 
 using namespace Grid;
@@ -196,46 +195,48 @@ int main(int argc, char *argv[]) {
             << std::endl;
 
   start = usecond();
-  nvtxRangePushA("Grid utils");
-  // cudaProfilerStart();
-  std::vector<FermionField> &rho_ref = phi;
-  if (!inputParams.symmetric) {
-    rho_ref = rho;
-  }
-  std::cout << GridLogMessage << "Found: " << inputParams.mfType << std::endl;
-  switch (inputParams.mfType) {
-  case MFType::prod:
-    std::cout << GridLogMessage << "Running Production MesonField" << std::endl;
-    worker.StagMesonField(Mpp, &rho_ref[0], nullptr, &phi[0], nullptr);
-    break;
-  case MFType::buggy:
-    std::cout << GridLogMessage
-              << "Running Broken (Momentum Project) MesonField" << std::endl;
-    DevA2AutilsBuggy<StaggeredImplR>::MesonField(Mpp, rho_ref, phi, spinTastes,
-                                                 phases, Tp);
-    break;
-  case MFType::mat:
-    std::cout << GridLogMessage << "Running MatObj MesonField" << std::endl;
-    DevA2AutilsMat<StaggeredImplR>::MesonField(Mpp, rho_ref, phi, spinTastes,
-                                               phases, Tp);
-    break;
-  case MFType::flatmat:
-    std::cout << GridLogMessage << "Running Flattened loop MatObj MesonField"
-              << std::endl;
-    DevA2AutilsFlatMat<StaggeredImplR>::MesonField(Mpp, rho_ref, phi,
+  {
+    GRID_TRACE("GridUtils");
+    // cudaProfilerStart();
+    std::vector<FermionField> &rho_ref = phi;
+    if (!inputParams.symmetric) {
+      rho_ref = rho;
+    }
+    std::cout << GridLogMessage << "Found: " << inputParams.mfType << std::endl;
+    switch (inputParams.mfType) {
+    case MFType::prod:
+      std::cout << GridLogMessage << "Running Production MesonField"
+                << std::endl;
+      worker.StagMesonField(Mpp, &rho_ref[0], nullptr, &phi[0], nullptr);
+      break;
+    case MFType::buggy:
+      std::cout << GridLogMessage
+                << "Running Broken (Momentum Project) MesonField" << std::endl;
+      DevA2AutilsBuggy<StaggeredImplR>::MesonField(Mpp, rho_ref, phi,
                                                    spinTastes, phases, Tp);
-    break;
-  case MFType::vector:
-    std::cout << GridLogMessage << "Running VecObj MesonField" << std::endl;
-    DevA2AutilsVector<StaggeredImplR>::MesonField(Mpp, rho_ref, phi, spinTastes,
-                                                  phases, Tp);
-    break;
-  default:
-    std::cout << GridLogMessage << "Unknown MFType" << std::endl;
-    break;
+      break;
+    case MFType::mat:
+      std::cout << GridLogMessage << "Running MatObj MesonField" << std::endl;
+      DevA2AutilsMat<StaggeredImplR>::MesonField(Mpp, rho_ref, phi, spinTastes,
+                                                 phases, Tp);
+      break;
+    case MFType::flatmat:
+      std::cout << GridLogMessage << "Running Flattened loop MatObj MesonField"
+                << std::endl;
+      DevA2AutilsFlatMat<StaggeredImplR>::MesonField(Mpp, rho_ref, phi,
+                                                     spinTastes, phases, Tp);
+      break;
+    case MFType::vector:
+      std::cout << GridLogMessage << "Running VecObj MesonField" << std::endl;
+      DevA2AutilsVector<StaggeredImplR>::MesonField(Mpp, rho_ref, phi,
+                                                    spinTastes, phases, Tp);
+      break;
+    default:
+      std::cout << GridLogMessage << "Unknown MFType" << std::endl;
+      break;
+    }
+    // cudaProfilerStop();
   }
-  // cudaProfilerStop();
-  nvtxRangePop();
   stop = usecond();
   std::cout << GridLogMessage << "M(rho,phi) created, execution time "
             << stop - start << " us" << std::endl;

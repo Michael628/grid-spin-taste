@@ -27,7 +27,6 @@ directory
 *************************************************************************************/
 /*  END LEGAL */
 #pragma once
-#include <nvtx3/nvToolsExt.h>
 
 NAMESPACE_BEGIN(Grid);
 /*
@@ -364,9 +363,6 @@ public:
     double t_export = 0;
     double t_gemm = 0;
     double t_allreduce = 0;
-    nvtxRangePushA("Import");
-    t_import -= usecond();
-
     std::vector<result_object> trace_planes;
 
     // Setup batched GEMM pointers - one batch per time slice
@@ -378,14 +374,18 @@ public:
     scalar *Rh = &BLAS_R[0];
     scalar *Th = &BLAS_T[0];
 
-    // Each batch points to a different time slice
-    for (int t = 0; t < nt; t++) {
-      acceleratorPut(Ld[t], Lh + t * nxyz * nleft * leftWords);
-      acceleratorPut(Rd[t], Rh + t * nxyz * nright * rightWords);
-      acceleratorPut(Td[t], Th + t * nresults * resultWords);
+    {
+      GRID_TRACE("Import");
+      t_import -= usecond();
+
+      // Each batch points to a different time slice
+      for (int t = 0; t < nt; t++) {
+        acceleratorPut(Ld[t], Lh + t * nxyz * nleft * leftWords);
+        acceleratorPut(Rd[t], Rh + t * nxyz * nright * rightWords);
+        acceleratorPut(Td[t], Th + t * nresults * resultWords);
+      }
+      t_import += usecond();
     }
-    t_import += usecond();
-    nvtxRangePop();
 
     GridBLAS BLAS;
 
@@ -393,24 +393,26 @@ public:
     // For each time t: T[t] = L[t] * R[t]
     // Sum over spatial xyz dimension
     /////////////////////////////////////////
-    nvtxRangePushA("GEMM");
-    t_gemm -= usecond();
-    BLAS.gemmBatched(GridBLAS_OP_N, GridBLAS_OP_N,
-                     nleft * leftWords,   // M (rows of L)
-                     nright * rightWords, // N (cols of R)
-                     nxyz,                // K (sum over spatial)
-                     scalar(1.0), Ld, Rd,
-                     scalar(0.0), // don't accumulate result
-                     Td);
-    BLAS.synchronise();
-    t_gemm += usecond();
-    nvtxRangePop();
+    {
+      GRID_TRACE("GEMM");
+      t_gemm -= usecond();
+      BLAS.gemmBatched(GridBLAS_OP_N, GridBLAS_OP_N,
+                       nleft * leftWords,   // M (rows of L)
+                       nright * rightWords, // N (cols of R)
+                       nxyz,                // K (sum over spatial)
+                       scalar(1.0), Ld, Rd,
+                       scalar(0.0), // don't accumulate result
+                       Td);
+      BLAS.synchronise();
+      t_gemm += usecond();
+    }
 
-    nvtxRangePushA("Export Trace");
-    t_export -= usecond();
-    ExportTrace(trace_planes);
-    t_export += usecond();
-    nvtxRangePop();
+    {
+      GRID_TRACE("ExportTrace");
+      t_export -= usecond();
+      ExportTrace(trace_planes);
+      t_export += usecond();
+    }
 
     /////////////////////////////////
     // Reduce across MPI ranks
@@ -433,12 +435,13 @@ public:
       }
     }
 
-    nvtxRangePushA("Global Sum");
-    t_allreduce -= usecond();
-    grid->GlobalSumVector((scalar *)&trace_gdata[0],
-                          gt * nresults * resultWords);
-    t_allreduce += usecond();
-    nvtxRangePop();
+    {
+      GRID_TRACE("GlobalSum");
+      t_allreduce -= usecond();
+      grid->GlobalSumVector((scalar *)&trace_gdata[0],
+                            gt * nresults * resultWords);
+      t_allreduce += usecond();
+    }
 
     std::cout << GridLogPerformance << " SpatialTrace t_import  " << t_import
               << "us" << std::endl;

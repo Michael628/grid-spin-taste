@@ -1,6 +1,9 @@
-AC_INIT([stag-gamma], [1.0], [support@example.com])
+AC_INIT([stag-gamma], [1.0], [michaellynch628@gmail.com])
 AC_PROG_CXX
-AC_CONFIG_FILES([build/Makefile])
+AC_CONFIG_FILES([Makefile])
+
+# Set installation prefix (default: /usr/local)
+AC_PREFIX_DEFAULT([/usr/local])
 
 # Check for Grid installation
 AC_ARG_WITH([grid],
@@ -8,37 +11,19 @@ AC_ARG_WITH([grid],
     [grid_prefix="$withval"],
     [grid_prefix=""])
 
-# Try to find Grid automatically if not specified
+# Require Grid installation path to be specified
 if test "x$grid_prefix" = "x"; then
-    AC_MSG_NOTICE([Searching for Grid installation...])
-    # Check common locations
-    for dir in "$HOME/work/Grid/install-scalar" \
-               "$HOME/Dropbox/Physics/projects/gridProjects/Grid/install-scalar" \
-               "/usr/local" \
-               "/opt/grid" \
-               "/usr"; do
-        AC_MSG_CHECKING([for grid-config in $dir/bin])
-        if test -x "$dir/bin/grid-config"; then
-            grid_prefix="$dir"
-            AC_MSG_RESULT([found])
-            break
-        else
-            AC_MSG_RESULT([not found])
-        fi
-    done
+    AC_MSG_ERROR([
+Grid installation path must be specified:
+  ./configure --with-grid=PATH
+])
 fi
 
 # Verify Grid installation
-if test "x$grid_prefix" = "x" || ! test -x "$grid_prefix/bin/grid-config"; then
+if ! test -x "$grid_prefix/bin/grid-config"; then
     AC_MSG_ERROR([
-Grid installation not found. Please specify the Grid installation path:
-  ./configure --with-grid=PATH
-
-Common locations to check:
-  $HOME/work/Grid/install-scalar
-  $HOME/Dropbox/Physics/projects/gridProjects/Grid/install-scalar
-  /usr/local
-  /opt/grid
+grid-config not found at: $grid_prefix/bin/grid-config
+Please verify the Grid installation path is correct.
 ])
 fi
 
@@ -104,6 +89,7 @@ AC_SUBST([A2A_BLOCKING_FLAGS], ["-DDEV_A2A_BLOCKING=$a2a_blocking"])
 AC_MSG_NOTICE([A2A blocking size set to: $a2a_blocking])
 
 AC_SUBST([GRID_PREFIX], [$grid_prefix])
+AC_SUBST([PREFIX], [$prefix])
 AC_OUTPUT
 
 echo ""

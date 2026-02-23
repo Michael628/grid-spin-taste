@@ -32,7 +32,6 @@ directory
 #include <DevStagA2Autils.h>
 #include <StagGamma.h>
 #include <cuda_profiler_api.h>
-#include <nvtx3/nvToolsExt.h>
 // clang-format on
 
 using namespace Grid;
@@ -110,9 +109,10 @@ int main(int argc, char *argv[]) {
 
   double start, stop, usec;
   start = usecond();
-  nvtxRangePushA("Project");
-  MP.Project(spinMat, sliced);
-  nvtxRangePop();
+  {
+    GRID_TRACE("Project");
+    MP.Project(spinMat, sliced);
+  }
   stop = usecond();
   usec = stop - start;
   int vol = 1;

@@ -1,10 +1,9 @@
 #pragma once
 // #include <Grid/Hadrons/Global.hpp>
-#include <A2AView.h>
 #include <Grid/Grid_Eigen_Tensor.h>
 #include <SpatialTrace.h>
 #include <StagGamma.h>
-#include <nvtx3/nvToolsExt.h>
+#include <a2a/A2AView.h>
 #include <typeinfo>
 
 NAMESPACE_BEGIN(Grid);
@@ -159,68 +158,68 @@ void DevA2AutilsMat<FImpl>::MesonField(
       rhs_view.openViews(&rhs_vj[jo], nrcache);
       auto rhs_v = rhs_view.getView();
 
-      nvtxRangePushA("local Inner");
+      {
+        GRID_TRACE("localInner");
 
-      int64_t Nt = nt;
-      int64_t Nxyz = nxyz;
-      int64_t Niprod = block * block; // Maximum size allocated
+        int64_t Nt = nt;
+        int64_t Nxyz = nxyz;
+        int64_t Niprod = block * block; // Maximum size allocated
 
-      // take local inner product
-      // and Initialize BLAS_R
-      accelerator_for2d(ls, grid->lSites(), ii, nlcache, 1, {
-        // Map from blas layout to grid lattice layout
-        auto ss = omap_p[ls];
-        auto lane = imap_p[ls];
+        // take local inner product
+        // and Initialize BLAS_R
+        accelerator_for2d(ls, grid->lSites(), ii, nlcache, 1, {
+          // Map from blas layout to grid lattice layout
+          auto ss = omap_p[ls];
+          auto lane = imap_p[ls];
 
-        int64_t l_t = ls / Nxyz;
-        int64_t l_xyz = ls % Nxyz;
+          int64_t l_t = ls / Nxyz;
+          int64_t l_xyz = ls % Nxyz;
 
-        auto left = lhs_v[ii][ss];
+          auto left = lhs_v[ii][ss];
 
-        for (int jj = 0; jj < nrcache; jj++) {
-          auto right = rhs_v[jj][ss];
-          Scalar_v vv;
+          for (int jj = 0; jj < nrcache; jj++) {
+            auto right = rhs_v[jj][ss];
+            Scalar_v vv;
 
-          vv = innerProduct(left, right);
-          auto data = extractLane(lane, vv);
+            vv = innerProduct(left, right);
+            auto data = extractLane(lane, vv);
 
-          int64_t word_idx = ii * block + jj;
-          // uint64_t idx = word_idx + l_xyz * Niprod + l_t * Nxyz * Niprod;
-          uint64_t idx = l_xyz + word_idx * Nxyz + l_t * Nxyz * Niprod;
-          blas_ip[idx] = data;
-        }
-      });
-
-      nvtxRangePop();
+            int64_t word_idx = ii * block + jj;
+            // uint64_t idx = word_idx + l_xyz * Niprod + l_t * Nxyz * Niprod;
+            uint64_t idx = l_xyz + word_idx * Nxyz + l_t * Nxyz * Niprod;
+            blas_ip[idx] = data;
+          }
+        });
+      }
 
       rhs_view.closeViews();
 
-      nvtxRangePushA("SpatialTrace");
-
       std::vector<MatStag> trace_result;
-      ST.Trace(trace_result);
+      {
+        GRID_TRACE("SpatialTrace");
 
-      nvtxRangePop();
+        ST.Trace(trace_result);
+      }
 
-      nvtxRangePushA("Extract results");
+      {
+        GRID_TRACE("ExtractResults");
 
-      thread_for2d(mmom, Nmom * Ngamma, t, Nt, {
-        int m = mmom / Ngamma;
-        int mu = mmom % Ngamma;
-        int idx = mmom + Nmom * Ngamma * t;
+        thread_for2d(mmom, Nmom * Ngamma, t, Nt, {
+          int m = mmom / Ngamma;
+          int mu = mmom % Ngamma;
+          int idx = mmom + Nmom * Ngamma * t;
 
-        for (int i = io; i < MIN(Lblock, io + block); i++) {
-          int ii = i % block;
-          for (int j = jo; j < MIN(Rblock, jo + block); j++) {
-            int jj = j % block;
+          for (int i = io; i < MIN(Lblock, io + block); i++) {
+            int ii = i % block;
+            for (int j = jo; j < MIN(Rblock, jo + block); j++) {
+              int jj = j % block;
 
-            auto tmp = peekIndex<LorentzIndex>(trace_result[idx], ii, jj);
-            mat((long)m, mu, (long)t, i, j) = tmp()();
+              auto tmp = peekIndex<LorentzIndex>(trace_result[idx], ii, jj);
+              mat((long)m, mu, (long)t, i, j) = tmp()();
+            }
           }
-        }
-      });
-
-      nvtxRangePop();
+        });
+      }
 
     } // jo
 

@@ -31,7 +31,6 @@ directory
 #include <StagA2Autils.h>
 #include <StagGamma.h>
 #include <cuda_profiler_api.h>
-#include <nvtx3/nvToolsExt.h>
 // clang-format on
 
 using namespace Grid;
@@ -118,12 +117,13 @@ int main(int argc, char *argv[]) {
   // execute meson field routine
   /////////////////////////////////////////////////////////////////////////
   start = usecond();
-  nvtxRangePushA("Grid utils");
-  cudaProfilerStart();
-  StagA2Autils<StaggeredImplR>::MesonField(Mpp, &phi[0], &phi[0], Gmu, phases,
-                                           Tp);
-  cudaProfilerStop();
-  nvtxRangePop();
+  {
+    GRID_TRACE("GridUtils");
+    cudaProfilerStart();
+    StagA2Autils<StaggeredImplR>::MesonField(Mpp, &phi[0], &phi[0], Gmu, phases,
+                                             Tp);
+    cudaProfilerStop();
+  }
   stop = usecond();
   std::cout << GridLogMessage << "M(phi,phi) created, execution time "
             << stop - start << " us" << std::endl;
