@@ -33,6 +33,7 @@ directory
 #include <DevStagA2AutilsMat.h>
 #include <DevStagA2AutilsFlatMat.h>
 #include <DevStagA2AutilsVector.h>
+#include <DevStagA2AutilsCoalesced.h>
 #include <StagGamma.h>
 // #include <cuda_profiler_api.h>
 // clang-format on
@@ -43,7 +44,7 @@ typedef typename NaiveStaggeredFermionD::ComplexField ComplexField;
 typedef typename NaiveStaggeredFermionD::FermionField FermionField;
 
 GRID_SERIALIZABLE_ENUM(MFType, undef, prod, 0, buggy, 1, mat, 2, flatmat, 3,
-                       vector, 4);
+                       vector, 4, coalesced, 5);
 GRID_SERIALIZABLE_ENUM(SourceType, undef, random, 0, point, 1);
 
 // clang-format off
@@ -54,8 +55,8 @@ public:
                                   MFType, mfType, 
                                   bool, symmetric,
                                   SourceType, sourceType,
-                                  std::vector<int>, phiSource,  // [x,y,z,t] for lhs point source
-                                  std::vector<int>, rhoSource,  // [x,y,z,t] for rhs point source
+                                  std::vector<std::string>, phiSource,  // [x,y,z,t] for lhs point source
+                                  std::vector<std::string>, rhoSource,  // [x,y,z,t] for rhs point source
                                   std::string, gammas, 
                                   std::string, writeFile);
 };
@@ -99,23 +100,17 @@ int main(int argc, char *argv[]) {
   }
 
   if (sourceType == SourceType::point) {
-    // Default to origin if not specified
-    Coordinate phiLoc = (inputParams.phiSource.size() == 4)
-                            ? Coordinate(inputParams.phiSource)
-                            : Coordinate(4, 0);
-    Coordinate rhoLoc = (inputParams.rhoSource.size() == 4)
-                            ? Coordinate(inputParams.rhoSource)
-                            : Coordinate(4, 0);
-
     std::cout << GridLogMessage << "Initialising point source fields"
               << std::endl;
-    std::cout << GridLogMessage << "  phi source at: (" << phiLoc[0] << ","
-              << phiLoc[1] << "," << phiLoc[2] << "," << phiLoc[3] << ")"
-              << std::endl;
-
     // Create point source for phi vectors
     for (unsigned int i = 0; i < blockSize; ++i) {
       phi[i] = Zero();
+    std:
+      int phi_index = i % inputParams.phiSource.size();
+      // auto temp = strToVec<Integer>(inputParams.phiSource[phi_index]);
+      Coordinate phiLoc(strToVec<int>(inputParams.phiSource[phi_index]));
+      std::cout << GridLogMessage << "  phi source at: (" << phiLoc << ")"
+                << std::endl;
 
       // Create point source: set value to 1.0 at specified location, zero
       // elsewhere We set it for all color/spin components
@@ -125,12 +120,13 @@ int main(int argc, char *argv[]) {
     }
 
     if (!inputParams.symmetric) {
-      std::cout << GridLogMessage << "  rho source at: (" << rhoLoc[0] << ","
-                << rhoLoc[1] << "," << rhoLoc[2] << "," << rhoLoc[3] << ")"
-                << std::endl;
       rho.resize(blockSize, &grid);
       for (unsigned int i = 0; i < blockSize; ++i) {
         rho[i] = Zero();
+        int rho_index = i % inputParams.rhoSource.size();
+        Coordinate rhoLoc = strToVec<int>(inputParams.rhoSource[rho_index]);
+        std::cout << GridLogMessage << "  rho source at: (" << rhoLoc << ")"
+                  << std::endl;
         typename FermionField::scalar_object one_src;
         one_src = 1.0;
         pokeSite(one_src, rho[i], rhoLoc);
@@ -205,29 +201,38 @@ int main(int argc, char *argv[]) {
     std::cout << GridLogMessage << "Found: " << inputParams.mfType << std::endl;
     switch (inputParams.mfType) {
     case MFType::prod:
-      std::cout << GridLogMessage << "Running Production MesonField"
+      std::cout << GridLogMessage << "Running Production MesonField code"
                 << std::endl;
       worker.StagMesonField(Mpp, &rho_ref[0], nullptr, &phi[0], nullptr);
       break;
     case MFType::buggy:
       std::cout << GridLogMessage
-                << "Running Broken (Momentum Project) MesonField" << std::endl;
+                << "Running Broken (Momentum Project) MesonField code"
+                << std::endl;
       DevA2AutilsBuggy<StaggeredImplR>::MesonField(Mpp, rho_ref, phi,
                                                    spinTastes, phases, Tp);
       break;
+    case MFType::coalesced:
+      std::cout << GridLogMessage << "Running Coalesced MesonField code"
+                << std::endl;
+      DevA2AutilsCoalesced<StaggeredImplR>::MesonField(Mpp, rho_ref, phi,
+                                                       spinTastes, phases, Tp);
+      break;
     case MFType::mat:
-      std::cout << GridLogMessage << "Running MatObj MesonField" << std::endl;
+      std::cout << GridLogMessage << "Running MatObj MesonField code"
+                << std::endl;
       DevA2AutilsMat<StaggeredImplR>::MesonField(Mpp, rho_ref, phi, spinTastes,
                                                  phases, Tp);
       break;
     case MFType::flatmat:
-      std::cout << GridLogMessage << "Running Flattened loop MatObj MesonField"
-                << std::endl;
+      std::cout << GridLogMessage
+                << "Running Flattened loop MatObj MesonField code" << std::endl;
       DevA2AutilsFlatMat<StaggeredImplR>::MesonField(Mpp, rho_ref, phi,
                                                      spinTastes, phases, Tp);
       break;
     case MFType::vector:
-      std::cout << GridLogMessage << "Running VecObj MesonField" << std::endl;
+      std::cout << GridLogMessage << "Running VecObj MesonField code"
+                << std::endl;
       DevA2AutilsVector<StaggeredImplR>::MesonField(Mpp, rho_ref, phi,
                                                     spinTastes, phases, Tp);
       break;
