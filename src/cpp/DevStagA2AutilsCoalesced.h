@@ -44,7 +44,7 @@ public:
 #define DEV_A2A_BLOCKING 128
 #endif
 
-extern const int devA2Ablocking;
+const int devA2Ablocking = DEV_A2A_BLOCKING;
 
 template <typename vtype>
 using iMatStag = iMatrix<iScalar<iScalar<vtype>>, devA2Ablocking>;
