@@ -34,6 +34,7 @@ directory
 // #include <DevStagA2AutilsFlatMat.h>
 // #include <DevStagA2AutilsVector.h>
 #include <DevStagA2AutilsCoalesced.h>
+#include <FusedStagA2Autils.h>
 #include <StagGamma.h>
 // #include <cuda_profiler_api.h>
 // clang-format on
@@ -43,7 +44,7 @@ using namespace Grid;
 typedef typename NaiveStaggeredFermionD::ComplexField ComplexField;
 typedef typename NaiveStaggeredFermionD::FermionField FermionField;
 
-GRID_SERIALIZABLE_ENUM(MFType, undef, prod, 0, coalesced, 1);
+GRID_SERIALIZABLE_ENUM(MFType, undef, prod, 0, coalesced, 1, fused, 2);
 GRID_SERIALIZABLE_ENUM(SourceType, undef, random, 0, point, 1);
 
 // clang-format off
@@ -209,6 +210,13 @@ int main(int argc, char *argv[]) {
                 << std::endl;
       DevA2AutilsCoalesced<StaggeredImplR>::MesonField(Mpp, rho_ref, phi,
                                                        spinTastes, phases, Tp);
+      break;
+    case MFType::fused:
+      std::cout << GridLogMessage << "Running Fused GEMM MesonField code"
+                << std::endl;
+      FusedA2Autils<StaggeredImplR>::MesonFieldLocal(Mpp, rho_ref, phi,
+                                                      spinTastes, phases, Tp,
+                                                      blockSize);
       break;
     default:
       std::cout << GridLogMessage << "Unknown MFType" << std::endl;

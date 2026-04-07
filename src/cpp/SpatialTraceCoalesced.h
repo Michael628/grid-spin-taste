@@ -57,12 +57,13 @@ public:
   uint64_t resultWordsBatch;
   uint64_t resultWords;
   int64_t nsimd;
+  int K_factor;
 
   deviceVector<scalar> BLAS_L;
   deviceVector<scalar> BLAS_R;
   deviceVector<scalar> BLAS_T;
 
-  SpatialTraceCoalesced() {};
+  SpatialTraceCoalesced() : K_factor(1) {};
   ~SpatialTraceCoalesced() { Deallocate(); };
 
   void Deallocate(void) {
@@ -76,18 +77,21 @@ public:
     resultWordsBatch = 0;
     resultWords = 0;
     nresults = 0;
+    K_factor = 1;
     BLAS_L.resize(0);
     BLAS_R.resize(0);
     BLAS_T.resize(0);
   }
 
-  void Allocate(int _nleft, int _nright, GridBase *_grid) {
+  // K_factor multiplies the spatial K dimension (e.g. Nc for colour-interleaved)
+  void Allocate(int _nleft, int _nright, GridBase *_grid, int _K_factor = 1) {
     grid = _grid;
     nsimd = vector::Nsimd();
+    K_factor = _K_factor;
     Coordinate ldims = grid->LocalDimensions();
 
     rNt = grid->_rdimensions[grid->Nd() - 1];
-    rNxyz = grid->oSites() / rNt;
+    rNxyz = (grid->oSites() / rNt) * K_factor;
     nleft = _nleft;
     nright = _nright;
     // Could probably do a different sizeof() call to include nsimd
@@ -196,7 +200,9 @@ public:
     }
   }
 
-  void Trace(std::vector<result_object> &trace_gdata) {
+  void Trace(std::vector<result_object> &trace_gdata,
+             GridBLASOperation_t opA = GridBLAS_OP_N,
+             GridBLASOperation_t opB = GridBLAS_OP_T) {
     double t_import = 0;
     double t_export = 0;
     double t_gemm = 0;
@@ -234,9 +240,7 @@ public:
     {
       GRID_TRACE("GEMM");
       t_gemm -= usecond();
-      // TEST: Changed right OP to transpose to flip from (t,xyz,word_idx)
-      // to (t,word_idx,xyz)
-      BLAS.gemmBatched(GridBLAS_OP_N, GridBLAS_OP_T,
+      BLAS.gemmBatched(opA, opB,
                        nleft * leftWordsBatch,   // M (rows of L)
                        nright * rightWordsBatch, // N (cols of R)
                        rNxyz,                    // K (sum over spatial)
